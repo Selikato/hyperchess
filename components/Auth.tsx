@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, Mail, User } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { getAuthCallbackUrl } from "@/lib/siteUrl";
 
 type AuthMode = "login" | "register";
 
@@ -15,6 +16,13 @@ function mapNetworkAuthError(message: string): string {
     m === "load failed"
   ) {
     return "Bağlantı kurulamadı. İnternetini kontrol et; gerekirse reklam engelleyici veya VPN’i kapatıp yeniden dene.";
+  }
+  if (
+    m.includes("rate limit") ||
+    m.includes("too many requests") ||
+    m.includes("429")
+  ) {
+    return "E-posta gönderim sınırı doldu. Supabase’in yerleşik e-postası saatte çok az gönderime izin verir; bir süre sonra tekrar dene. Sık kayıt veya birkaç kişi aynı anda denerse de sınır dolabilir. Kalıcı çözüm: Supabase Dashboard → Authentication → SMTP’den kendi sağlayıcını bağlamak (SendGrid, Resend vb.).";
   }
   return message;
 }
@@ -84,6 +92,7 @@ export function Auth() {
         email: trimmed,
         password,
         options: {
+          emailRedirectTo: getAuthCallbackUrl(),
           data: {
             display_name: displayName.trim() || undefined,
             full_name: displayName.trim() || undefined,
