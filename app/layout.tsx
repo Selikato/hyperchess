@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ProfileProvider } from "@/components/ProfileProvider";
 import { SupabaseSessionListener } from "@/components/SupabaseSessionListener";
 import "./globals.css";
 
@@ -30,7 +31,7 @@ export default function RootLayout({
     >
       <body className="flex min-h-full flex-col">
         <SupabaseSessionListener />
-        {children}
+        <ProfileProvider>{children}</ProfileProvider>
       </body>
     </html>
   );

@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prepare": "node scripts/copy-stockfish.mjs",
     "dev": "next dev",
     "dev:lan": "next dev -H 0.0.0.0",
-    "build": "next build",
+    "build": "node scripts/copy-stockfish.mjs && next build",
     "start": "next start",
     "lint": "eslint"
   },

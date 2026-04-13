@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Stockfish WASM/JS (npm prepare indirir; repoya binmeyebilir)
+public/stockfish.js
+public/stockfish.wasm

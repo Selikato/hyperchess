@@ -1,18 +1,33 @@
-import { ChessBoard } from "@/components/ChessBoard";
+"use client";
+
+import { Auth } from "@/components/Auth";
+import { BotChessGame } from "@/components/bot/BotChessGame";
 import { SessionBar } from "@/components/SessionBar";
+import { useProfile } from "@/components/ProfileProvider";
 
 export default function Home() {
+  const { user, profileLoading } = useProfile();
+
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-black text-sm text-zinc-200">
+        Yükleniyor...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Auth />;
+  }
+
   return (
-    <div className="flex min-h-screen flex-col items-center gap-8 bg-zinc-50 p-8 dark:bg-zinc-950">
-      <header className="flex w-full max-w-[min(90vw,560px)] flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
-          HyperChess
-        </h1>
+    <div className="flex min-h-screen flex-col bg-black text-zinc-100">
+      <header className="flex w-full justify-end px-3 pt-3 pb-1 sm:px-4">
         <SessionBar />
       </header>
-      <div className="flex flex-1 flex-col items-center justify-center">
-        <ChessBoard />
-      </div>
+      <main className="flex flex-1 flex-col items-center px-2 pb-4 pt-1 sm:px-3">
+        <BotChessGame />
+      </main>
     </div>
   );
 }
