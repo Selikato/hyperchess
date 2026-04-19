@@ -18,6 +18,11 @@ import {
   parseUciBestmove,
 } from "@/lib/stockfish/browserEngine";
 import { useProfile } from "@/components/ProfileProvider";
+import {
+  animateEloNumber,
+  computeEloAfterBotMatch,
+  DEFAULT_ELO,
+} from "@/lib/elo";
 
 const SELECTED_STYLE: CSSProperties = {
   boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
@@ -148,6 +153,12 @@ export function BotChessGame() {
   const game = useMemo(() => new Chess(), []);
   const { user, elo, refreshProfile } = useProfile();
 
+  /** Maç başında profilden alınan Elo (hesaplama bu değere göre) */
+  const matchStartEloRef = useRef<number | null>(null);
+  /** Tahta üzerinde gösterilen Elo (animasyonlu) */
+  const [liveElo, setLiveElo] = useState<number | null>(null);
+  const eloAnimatingRef = useRef(false);
+
   const [fen, setFen] = useState(() => game.fen());
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, CSSProperties>>({});
@@ -179,7 +190,23 @@ export function BotChessGame() {
   const previousEvalRef = useRef<number | null>(null);
 
   const depth = 15;
-  const displayElo = elo === 1200 ? "?" : String(elo ?? "?");
+
+  useEffect(() => {
+    if (eloAnimatingRef.current) return;
+    if (elo === null || elo === undefined) {
+      setLiveElo(null);
+      return;
+    }
+    setLiveElo(elo);
+    if (matchStartEloRef.current === null) {
+      matchStartEloRef.current = elo;
+    }
+  }, [elo]);
+
+  const displayEloForBar = user
+    ? String(Math.round(liveElo ?? elo ?? DEFAULT_ELO))
+    : "?";
+
   const displayName =
     (user?.user_metadata?.display_name as string | undefined) ||
     (user?.user_metadata?.full_name as string | undefined) ||
@@ -468,7 +495,10 @@ export function BotChessGame() {
     setThinking(false);
     setWhiteClockMs(MATCH_MS);
     setBlackClockMs(MATCH_MS);
-  }, [clearSel, game]);
+    const base = elo ?? DEFAULT_ELO;
+    matchStartEloRef.current = base;
+    setLiveElo(base);
+  }, [clearSel, game, elo]);
 
   const persistEloAndClose = async (outcome: ModalOutcome) => {
     setModal((m) => ({ ...m, open: false }));
@@ -480,13 +510,31 @@ export function BotChessGame() {
       return;
     }
 
-    const target = effective === "win" ? 800 : 500;
-    const { error } = await supabase.rpc("update_elo", { p_elo: target });
+    const start =
+      matchStartEloRef.current ?? elo ?? DEFAULT_ELO;
+    const botOutcome: "win" | "loss" =
+      effective === "win" ? "win" : "loss";
+    const nextElo = computeEloAfterBotMatch(start, botOutcome);
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ elo: nextElo, updated_at: new Date().toISOString() })
+      .eq("id", user.id);
+
     if (error) {
       setBanner(
-        "Elo güncellenemedi. Supabase’de update_elo fonksiyonunun tanımlı olduğundan emin ol."
+        "Elo güncellenemedi. profiles tablosu güncelleme izni veya RLS kurallarını kontrol et."
       );
+      await refreshProfile();
+      return;
     }
+
+    eloAnimatingRef.current = true;
+    const fromDisplay = liveElo ?? start;
+    await animateEloNumber(fromDisplay, nextElo, 520, (v) => setLiveElo(v));
+    eloAnimatingRef.current = false;
+    setLiveElo(nextElo);
+    matchStartEloRef.current = nextElo;
     await refreshProfile();
   };
 
@@ -545,7 +593,7 @@ export function BotChessGame() {
         <MatchPlayerBar
           fallbackLetter={displayName || "?"}
           name={displayName}
-          eloText={displayElo}
+          eloText={displayEloForBar}
           clockMs={whiteClockMs}
           timerVariant="light"
         />

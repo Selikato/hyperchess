@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ArenaToastProvider } from "@/components/arena/ArenaToastProvider";
+import { PresenceTracker } from "@/components/arena/PresenceTracker";
 import { ProfileProvider } from "@/components/ProfileProvider";
 import { SupabaseSessionListener } from "@/components/SupabaseSessionListener";
 import "./globals.css";
@@ -31,7 +33,10 @@ export default function RootLayout({
     >
       <body className="flex min-h-full flex-col">
         <SupabaseSessionListener />
-        <ProfileProvider>{children}</ProfileProvider>
+        <ProfileProvider>
+          <PresenceTracker />
+          <ArenaToastProvider>{children}</ArenaToastProvider>
+        </ProfileProvider>
       </body>
     </html>
   );

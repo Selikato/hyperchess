@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { BotChessGame } from "@/components/bot/BotChessGame";
+import { RegisterWelcomeBanner } from "@/components/RegisterWelcomeBanner";
 import { SessionBar } from "@/components/SessionBar";
 
 export const metadata: Metadata = {
@@ -17,6 +19,9 @@ export default function PlayBotPage() {
         <SessionBar />
       </header>
       <main className="flex flex-1 flex-col items-center px-2 pb-4 pt-1 sm:px-3">
+        <Suspense fallback={null}>
+          <RegisterWelcomeBanner />
+        </Suspense>
         <BotChessGame />
       </main>
     </div>

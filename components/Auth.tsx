@@ -4,9 +4,28 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, Mail, User } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { getAuthCallbackUrl } from "@/lib/siteUrl";
 
 type AuthMode = "login" | "register";
+
+function isAlreadyRegisteredError(message: string) {
+  const m = message.toLowerCase();
+  return (
+    m.includes("already registered") ||
+    m.includes("already been registered") ||
+    m.includes("user already exists") ||
+    m.includes("email address is already") ||
+    m.includes("email already exists")
+  );
+}
+
+function isInvalidCredentialsError(message: string) {
+  const m = message.toLowerCase();
+  return (
+    m.includes("invalid login credentials") ||
+    m.includes("invalid credentials") ||
+    m.includes("wrong password")
+  );
+}
 
 function mapNetworkAuthError(message: string): string {
   const m = message.toLowerCase();
@@ -23,6 +42,9 @@ function mapNetworkAuthError(message: string): string {
     m.includes("429")
   ) {
     return "E-posta gönderim sınırı doldu. Supabase’in yerleşik e-postası saatte çok az gönderime izin verir; bir süre sonra tekrar dene. Sık kayıt veya birkaç kişi aynı anda denerse de sınır dolabilir. Kalıcı çözüm: Supabase Dashboard → Authentication → SMTP’den kendi sağlayıcını bağlamak (SendGrid, Resend vb.).";
+  }
+  if (isAlreadyRegisteredError(message)) {
+    return "Bu e-posta ile zaten bir hesap var. Üstteki Giriş sekmesinden şifrenle giriş yap.";
   }
   return message;
 }
@@ -61,7 +83,7 @@ export function Auth() {
     setError(null);
     setInfo(null);
 
-    const trimmed = email.trim();
+    const trimmed = email.trim().toLowerCase();
     if (!trimmed || !password) {
       setError("E-posta ve şifre gerekli.");
       return;
@@ -92,7 +114,6 @@ export function Auth() {
         email: trimmed,
         password,
         options: {
-          emailRedirectTo: getAuthCallbackUrl(),
           data: {
             display_name: displayName.trim() || undefined,
             full_name: displayName.trim() || undefined,
@@ -100,18 +121,51 @@ export function Auth() {
         },
       });
       if (signUpError) {
+        if (isAlreadyRegisteredError(signUpError.message)) {
+          const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: trimmed,
+            password,
+          });
+          if (!signInError) {
+            router.push("/");
+            router.refresh();
+            return;
+          }
+          if (signInError.message && isInvalidCredentialsError(signInError.message)) {
+            setError(
+              "Bu e-posta bu Supabase projesinde daha önce kayıtlı (test veya başka giriş olabilir). Şifre yanlış olabilir — Giriş sekmesinden dene. E-postayı hiç kullanmadığını düşünüyorsan Dashboard → Authentication → Users’ta adresi kontrol et; gerekirse silip yeniden kayıt ol."
+            );
+          } else {
+            setError(mapNetworkAuthError(signInError.message));
+          }
+          return;
+        }
         setError(mapNetworkAuthError(signUpError.message));
         return;
       }
-      if (data.session) {
-        router.push("/");
-        router.refresh();
+
+      if (!data.session && data.user) {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: trimmed,
+          password,
+        });
+        if (signInError) {
+          setError(
+            mapNetworkAuthError(
+              signInError.message ||
+                "Kayıt oluştu ancak oturum açılamadı. Giriş yapmayı dene."
+            )
+          );
+          return;
+        }
+      } else if (!data.session) {
+        setError("Oturum oluşturulamadı. Tekrar dene veya giriş yap.");
         return;
       }
-      setInfo(
-        "Kayıt alındı. Hesabını etkinleştirmen için gönderilen e-postadaki bağlantıya tıkla (e-posta onayı açıksa)."
-      );
+
       setPassword("");
+      router.push("/play/bot?welcome=register");
+      router.refresh();
     } catch (err) {
       const raw =
         err instanceof Error ? err.message : "Beklenmeyen bir hata oluştu.";

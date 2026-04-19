@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Kopyalanan Stockfish bundle’ları (minify, require) — kaynak değil
+    "public/stockfish.js",
+    "public/stockfish/**",
   ]),
 ]);
 

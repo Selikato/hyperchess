@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
@@ -10,17 +11,23 @@ import {
 } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
+import { DEFAULT_ELO } from "@/lib/elo";
 
 type ProfileContextValue = {
   user: User | null;
   elo: number | null;
   profileLoading: boolean;
-  /** Profildeki Elo tam 1200 ise seviye belirleme maçı (varsayılan). */
+  /** Profildeki Elo varsayılan başlangıç değerindeyse (placement). */
   placementMatch: boolean;
   refreshProfile: () => Promise<void>;
 };
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
+
+function isRefreshTokenError(message: string) {
+  const m = message.toLowerCase();
+  return m.includes("invalid refresh token") || m.includes("refresh token not found");
+}
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -28,41 +35,54 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profileLoading, setProfileLoading] = useState(true);
 
   const refreshProfile = useCallback(async () => {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const u = session?.user ?? null;
-    setUser(u);
-    if (!u) {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const u = session?.user ?? null;
+      setUser(u);
+      if (!u) {
+        setElo(null);
+        setProfileLoading(false);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("elo")
+        .eq("id", u.id)
+        .maybeSingle();
+      if (error) {
+        setElo(DEFAULT_ELO);
+      } else {
+        setElo(typeof data?.elo === "number" ? data.elo : DEFAULT_ELO);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isRefreshTokenError(msg)) {
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+      }
+      setUser(null);
       setElo(null);
-      setProfileLoading(false);
-      return;
-    }
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("elo")
-      .eq("id", u.id)
-      .maybeSingle();
-    if (error) {
-      setElo(1200);
-    } else {
-      setElo(typeof data?.elo === "number" ? data.elo : 1200);
     }
     setProfileLoading(false);
   }, []);
 
   useEffect(() => {
-    void refreshProfile();
+    startTransition(() => {
+      void refreshProfile();
+    });
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(() => {
-      setProfileLoading(true);
-      void refreshProfile();
+      startTransition(() => {
+        setProfileLoading(true);
+        void refreshProfile();
+      });
     });
     return () => subscription.unsubscribe();
   }, [refreshProfile]);
 
-  const placementMatch = Boolean(user) && elo === 1200;
+  const placementMatch = Boolean(user) && elo === DEFAULT_ELO;
 
   const value = useMemo<ProfileContextValue>(
     () => ({

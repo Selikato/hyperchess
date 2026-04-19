@@ -1,10 +1,11 @@
 /**
  * Üretimde e-posta onayı ve OAuth yönlendirmeleri için kanonik kök URL.
  *
- * `getSiteUrl()`: önce `NEXT_PUBLIC_SITE_URL`, sonra tarayıcı origin / Vercel / üretim fallback.
- * `getAuthCallbackUrl()`: e-posta doğrulama linki için **localhost kullanmaz** — env yoksa her zaman
- * `https://hyperchess.vercel.app/auth/callback` (yerelde kayıt olsan bile mail Vercel’e gider).
- * Yerel test için `.env.local` içinde `NEXT_PUBLIC_SITE_URL=http://localhost:3000` kullan.
+ * `getSiteUrl()`: önce `NEXT_PUBLIC_SITE_URL`, sonra tarayıcı origin / Vercel / fallback.
+ * `getAuthCallbackUrl()`: `emailRedirectTo` için prod/dev dinamiği:
+ * - Production: `https://hyperchess.vercel.app/auth/callback`
+ * - Development: `http://localhost:3000/auth/callback`
+ * Dilersen `NEXT_PUBLIC_SITE_URL` ile bu davranışı override edebilirsin.
  *
  * Supabase → Authentication → URL Configuration:
  * - Site URL: `https://hyperchess.vercel.app`
@@ -12,6 +13,7 @@
  */
 
 const PRODUCTION_SITE_FALLBACK = "https://hyperchess.vercel.app";
+const DEVELOPMENT_SITE_FALLBACK = "http://localhost:3000";
 
 export function getSiteUrl(): string {
   const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
@@ -36,5 +38,9 @@ export function getSiteUrl(): string {
 export function getAuthCallbackUrl(): string {
   const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (fromEnv) return `${fromEnv.replace(/\/+$/, "")}/auth/callback`;
-  return `${PRODUCTION_SITE_FALLBACK}/auth/callback`;
+  const base =
+    process.env.NODE_ENV === "production"
+      ? PRODUCTION_SITE_FALLBACK
+      : DEVELOPMENT_SITE_FALLBACK;
+  return `${base}/auth/callback`;
 }

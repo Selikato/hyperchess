@@ -8,10 +8,10 @@ import { useProfile } from "@/components/ProfileProvider";
 export function SessionBar() {
   const router = useRouter();
   const { user, elo, profileLoading } = useProfile();
-  const shownElo = elo === 1200 ? "?" : (elo ?? "—");
+  const shownElo = elo != null ? String(elo) : "—";
 
   const boardGreen =
-    "border border-[#5a7a45] bg-[#739552] text-white transition hover:brightness-110 active:brightness-95";
+    "border border-[#6ea349] bg-[#81b64c] font-semibold text-[#262421] transition hover:bg-[#8fc057] active:bg-[#74a843]";
 
   if (!user) {
     return (
