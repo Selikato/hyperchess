@@ -13,6 +13,11 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { useProfile } from "@/components/ProfileProvider";
+import {
+  ChessMobileBottomNav,
+  ChessMobileTopBar,
+  chessMobileMainPaddingClass,
+} from "@/components/arena/ChessMobileChrome";
 
 /** Chess.com tarzı koyu palet */
 export const arena = {
@@ -90,10 +95,11 @@ export function ArenaShell({
   const initial = display.slice(0, 1).toUpperCase();
 
   return (
-    <div className={`flex min-h-screen ${arena.bg} ${arena.text} font-sans antialiased`}>
-      {/* Sol şerit — Chess.com menü */}
+    <div className={`relative flex min-h-screen ${arena.bg} ${arena.text} font-sans antialiased`}>
+      <ChessMobileTopBar homeHref="/play/online" />
+      {/* Sol şerit — masaüstü */}
       <aside
-        className={`flex w-[212px] shrink-0 flex-col border-r ${arena.border} ${arena.sidebar}`}
+        className={`hidden w-[212px] shrink-0 flex-col border-r lg:flex ${arena.border} ${arena.sidebar}`}
       >
         <div className="border-b border-white/5 px-3 py-4">
           <Link
@@ -165,7 +171,9 @@ export function ArenaShell({
 
       {/* Orta + sağ */}
       <div className="flex min-w-0 flex-1 flex-col lg:flex-row">
-        <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${arena.bg}`}>
+        <div
+          className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${arena.bg} ${chessMobileMainPaddingClass()}`}
+        >
           {children}
         </div>
         {rightAside != null && (
@@ -176,6 +184,7 @@ export function ArenaShell({
           </aside>
         )}
       </div>
+      <ChessMobileBottomNav homeHref="/play/online" />
     </div>
   );
 }

@@ -156,7 +156,7 @@ export function FriendsPanel({ variant = "card" }: FriendsPanelProps) {
   const labelMuted = rail ? "mb-1 text-xs text-[#9b9893]" : "mb-1 text-xs text-zinc-400";
 
   return (
-    <div className={box}>
+    <div className={box} id={rail ? "friends" : undefined}>
       <h2 className={h2}>Arkadaşlar</h2>
 
       <div>
