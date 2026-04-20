@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
 import { BookOpen, Clock, Cpu, GraduationCap } from "lucide-react";
 import { ActiveMatchesStrip } from "@/components/arena/ActiveMatchesStrip";
 import { arena, ArenaShell } from "@/components/arena/ArenaShell";
 import { FriendsPanel } from "@/components/arena/FriendsPanel";
 import { useProfile } from "@/components/ProfileProvider";
-import { joinPublicMatch } from "@/lib/arena/api";
+import {
+  cancelPublicWaitingMatch,
+  joinPublicMatchWithHumanWait,
+} from "@/lib/arena/api";
 
 function MobileListRow({
   href,
@@ -64,15 +67,27 @@ export default function OnlineLobbyPage() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const HUMAN_WAIT_MS = 10_000;
+
   const startQuick = () => {
     setErr(null);
     setBusy(true);
-    void joinPublicMatch()
-      .then((id) => router.push(`/play/online/${id}`))
-      .catch((e) => {
+    void (async () => {
+      try {
+        const { matchId, humanJoined } =
+          await joinPublicMatchWithHumanWait(HUMAN_WAIT_MS);
+        if (humanJoined) {
+          router.push(`/play/online/${matchId}`);
+          return;
+        }
+        await cancelPublicWaitingMatch(matchId);
+        router.push("/play/online?queueTimeout=1");
+      } catch (e) {
         setErr(e instanceof Error ? e.message : "Eşleşme başarısız.");
-      })
-      .finally(() => setBusy(false));
+      } finally {
+        setBusy(false);
+      }
+    })();
   };
 
   if (profileLoading) {
@@ -105,6 +120,9 @@ export default function OnlineLobbyPage() {
     <ArenaShell rightAside={<FriendsPanel variant="rail" />}>
       {/* —— Mobil: Chess.com dikey liste + Oyna —— */}
       <div className="lg:hidden">
+        <Suspense fallback={null}>
+          <QueueTimeoutNotice mobile />
+        </Suspense>
         <div className="border-b border-[#2a2926] bg-[#121212] px-1">
           <MobileListRow
             static
@@ -137,7 +155,11 @@ export default function OnlineLobbyPage() {
             }}
             thumb="♟"
             title="Çevrimiçi oyna"
-            subtitle={busy ? "Eşleşiliyor…" : "Hızlı maç · rasgele rakip"}
+            subtitle={
+              busy
+                ? "İnsan rakibi aranıyor (en fazla 10 sn)…"
+                : "Hızlı maç · rasgele rakip"
+            }
             right={
               <div className="mt-2 flex items-center gap-1 text-amber-200/90">
                 <span className="text-xs">🏆</span>
@@ -175,7 +197,7 @@ export default function OnlineLobbyPage() {
             onClick={() => startQuick()}
             className={`w-full rounded-xl py-3.5 text-center text-lg font-bold text-[#262421] shadow-lg ${arena.green} disabled:opacity-55`}
           >
-            {busy ? "Eşleşiliyor…" : "Oyna"}
+            {busy ? "Rakip aranıyor…" : "Oyna"}
           </button>
           {err && <p className="mt-2 text-center text-sm text-red-400">{err}</p>}
         </div>
@@ -187,6 +209,9 @@ export default function OnlineLobbyPage() {
 
       {/* —— Masaüstü —— */}
       <div className="mx-auto hidden max-w-4xl px-4 py-6 sm:px-6 lg:block lg:px-8">
+        <Suspense fallback={null}>
+          <QueueTimeoutNotice />
+        </Suspense>
         <div
           className={`mb-8 flex flex-col gap-4 rounded-xl border ${arena.border} ${arena.panel} p-5 sm:flex-row sm:items-center sm:justify-between`}
         >
@@ -247,7 +272,7 @@ export default function OnlineLobbyPage() {
               onClick={() => startQuick()}
               className={`flex-1 rounded-xl px-6 py-4 text-center text-base font-bold text-[#262421] shadow-md transition disabled:opacity-55 ${arena.green}`}
             >
-              {busy ? "Eşleşiliyor…" : "Yeni oyun"}
+              {busy ? "Rakip aranıyor…" : "Yeni oyun"}
             </button>
             <div
               className={`flex flex-1 items-center justify-center gap-2 rounded-xl border ${arena.border} ${arena.panel} px-6 py-4 text-sm font-semibold text-[#e8e6e3]`}
@@ -264,5 +289,35 @@ export default function OnlineLobbyPage() {
         <ActiveMatchesStrip />
       </div>
     </ArenaShell>
+  );
+}
+
+function QueueTimeoutNotice({ mobile = false }: { mobile?: boolean }) {
+  const searchParams = useSearchParams();
+  const queueTimeout = useMemo(
+    () => searchParams.get("queueTimeout") === "1",
+    [searchParams]
+  );
+  if (!queueTimeout) return null;
+
+  if (mobile) {
+    return (
+      <div className="mx-1 mb-3 rounded-lg border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-sm text-amber-100/95">
+        10 saniye içinde insan rakibi bulunamadı, istersen botla oynayabilirsin.
+        <Link href="/" className="ml-2 font-semibold underline">
+          Bota git
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-3 text-sm text-amber-100/95">
+      10 saniye içinde insan rakibi bulunamadı, istersen{" "}
+      <Link href="/" className="font-semibold underline">
+        bot moduna dönebilirsin
+      </Link>
+      .
+    </div>
   );
 }

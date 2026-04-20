@@ -10,6 +10,8 @@ import {
 } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
+import Image from "next/image";
+import { Clock } from "lucide-react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
 import type { Move, Square } from "chess.js";
@@ -68,6 +70,70 @@ function legalDestinations(game: Chess, from: Square): Set<string> {
 }
 
 const STARTING_FEN = new Chess().fen();
+const MATCH_MS = 10 * 60 * 1000;
+
+function formatClock(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+function MatchPlayerBar({
+  avatarSrc,
+  fallbackLetter,
+  name,
+  eloText,
+  clockMs,
+  timerVariant,
+}: {
+  avatarSrc?: string;
+  fallbackLetter: string;
+  name: string;
+  eloText: string;
+  clockMs: number;
+  timerVariant: "dark" | "light";
+}) {
+  const timerClass =
+    timerVariant === "dark"
+      ? "bg-black/80 text-white"
+      : "bg-white text-zinc-900 shadow-sm";
+
+  return (
+    <div className="flex min-h-[44px] items-center justify-between gap-2 px-0.5 sm:gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
+        <div className="relative size-9 shrink-0 overflow-hidden rounded border border-white/30 bg-white sm:size-10">
+          {avatarSrc ? (
+            <Image
+              src={avatarSrc}
+              alt=""
+              fill
+              sizes="40px"
+              className="object-cover"
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center bg-zinc-500 text-sm font-bold uppercase text-white">
+              {fallbackLetter.slice(0, 1)}
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 truncate text-[14px] font-semibold text-white sm:text-[15px]">
+          {name}{" "}
+          <span className="font-normal text-zinc-300">({eloText})</span>
+        </div>
+      </div>
+      <div
+        className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[13px] font-semibold tabular-nums sm:gap-1.5 sm:px-2.5 sm:text-sm ${timerClass}`}
+      >
+        <Clock
+          className={`size-3.5 sm:size-4 ${timerVariant === "light" ? "text-zinc-700" : "opacity-90"}`}
+          aria-hidden
+        />
+        {formatClock(clockMs)}
+      </div>
+    </div>
+  );
+}
 
 export function OnlineChessGame({ matchId }: { matchId: string }) {
   const { user } = useProfile();
@@ -83,6 +149,8 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     title: "",
     body: "",
   });
+  const [whiteClockMs, setWhiteClockMs] = useState(MATCH_MS);
+  const [blackClockMs, setBlackClockMs] = useState(MATCH_MS);
 
   const myColor: "w" | "b" | null = useMemo(() => {
     if (!user || !match) return null;
@@ -92,6 +160,13 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }, [user, match]);
 
   const boardOrientation = myColor === "b" ? "black" : "white";
+  const myName =
+    (user?.user_metadata?.display_name as string | undefined) ||
+    (user?.user_metadata?.full_name as string | undefined) ||
+    user?.email?.split("@")[0] ||
+    "Oyuncu";
+  const topName = myColor === "b" ? myName : "Rakip";
+  const bottomName = myColor === "w" ? myName : "Rakip";
 
   const loadRow = useCallback(async () => {
     try {
@@ -186,10 +261,37 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     };
   }, [matchId, user?.id]);
 
+  useEffect(() => {
+    if (!match || match.status !== "playing" || modal.open) return;
+    const id = setInterval(() => {
+      if (match.turn === "w") {
+        setWhiteClockMs((w) => Math.max(0, w - 1000));
+      } else {
+        setBlackClockMs((b) => Math.max(0, b - 1000));
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [match?.id, match?.status, match?.turn, modal.open]);
+
+  useEffect(() => {
+    if (!match) return;
+    if (match.status !== "waiting" && match.status !== "playing") return;
+    const id = setInterval(() => {
+      void loadRow();
+    }, 2500);
+    return () => clearInterval(id);
+  }, [match?.id, match?.status, loadRow]);
+
   const waitingOpponent =
     match?.status === "waiting" &&
     myColor === "w" &&
     match.black_player_id == null;
+
+  useEffect(() => {
+    if (!match?.id) return;
+    setWhiteClockMs(MATCH_MS);
+    setBlackClockMs(MATCH_MS);
+  }, [match?.id]);
 
   const canInteract =
     Boolean(user) &&
@@ -324,6 +426,17 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     [canInteract, myColor]
   );
 
+  const resign = useCallback(async () => {
+    if (!match || myColor === null || modal.open || match.status !== "playing") return;
+    const winnerId =
+      myColor === "w" ? match.black_player_id ?? null : match.white_player_id ?? null;
+    try {
+      await finishMatch(match.id, winnerId);
+    } catch (e) {
+      setBanner(e instanceof Error ? e.message : "Maç sonlandırılamadı.");
+    }
+  }, [match, myColor, modal.open]);
+
   if (loadError) {
     return (
       <div className="rounded-lg border border-red-800/80 bg-red-950/40 px-4 py-3 text-sm text-red-100">
@@ -353,7 +466,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }
 
   return (
-    <div className="relative flex w-full max-w-[min(100vw-0.5rem,560px)] flex-col gap-2 text-[#e8e6e3]">
+    <div className="relative flex w-full max-w-[min(100vw-0.5rem,560px)] flex-col gap-1.5 text-zinc-100 sm:max-w-[min(96vw,640px)]">
       <div className="flex items-center justify-between gap-2 text-xs text-[#9b9893]">
         <span>
           {match.match_type === "public" ? "Hızlı maç" : "Özel maç"} ·{" "}
@@ -381,26 +494,59 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
         </p>
       )}
 
-      <div className="relative w-full overflow-hidden rounded-sm shadow-md">
-        <Chessboard
-          options={{
-            id: `online-${matchId}`,
-            position: fen,
-            boardOrientation,
-            boardStyle: { width: "100%", maxWidth: "100%" },
-            squareStyles,
-            lightSquareStyle: { backgroundColor: "#ebecd0" },
-            darkSquareStyle: { backgroundColor: "#739552" },
-            showNotation: true,
-            allowDragging: true,
-            allowDrawingArrows: false,
-            clearArrowsOnPositionChange: true,
-            canDragPiece: canDragPieceCb,
-            onSquareClick,
-            onPieceClick,
-            onPieceDrop: onDrop,
-          }}
+      <div className="relative flex w-full flex-col gap-1.5 sm:gap-2">
+        <MatchPlayerBar
+          fallbackLetter={topName || "R"}
+          name={topName}
+          eloText="?"
+          clockMs={boardOrientation === "white" ? blackClockMs : whiteClockMs}
+          timerVariant="dark"
         />
+        <div className="relative w-full overflow-hidden rounded-sm shadow-md">
+          <Chessboard
+            options={{
+              id: `online-${matchId}`,
+              position: fen,
+              boardOrientation,
+              boardStyle: { width: "100%", maxWidth: "100%" },
+              squareStyles,
+              lightSquareStyle: { backgroundColor: "#ebecd0" },
+              darkSquareStyle: { backgroundColor: "#739552" },
+              showNotation: true,
+              allowDragging: true,
+              allowDrawingArrows: false,
+              clearArrowsOnPositionChange: true,
+              canDragPiece: canDragPieceCb,
+              onSquareClick,
+              onPieceClick,
+              onPieceDrop: onDrop,
+            }}
+          />
+        </div>
+        <MatchPlayerBar
+          fallbackLetter={bottomName || "S"}
+          name={bottomName}
+          eloText="?"
+          clockMs={boardOrientation === "white" ? whiteClockMs : blackClockMs}
+          timerVariant="light"
+        />
+      </div>
+
+      <div className="relative mt-1 flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => void resign()}
+          disabled={modal.open || match.status !== "playing"}
+          className="rounded-md border border-[#5a7a45] bg-[#739552] px-4 py-2 text-sm font-semibold text-white transition enabled:hover:brightness-110 disabled:opacity-50"
+        >
+          Terk et
+        </button>
+        <Link
+          href="/play/online"
+          className="rounded-md border border-zinc-500 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800"
+        >
+          Lobi
+        </Link>
       </div>
 
       {modal.open && (

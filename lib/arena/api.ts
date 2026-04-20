@@ -1,5 +1,14 @@
 import { supabase } from "@/lib/supabaseClient";
-import type { FriendshipRow, MatchRow, ProfileSearchRow } from "@/lib/arena/types";
+import type {
+  FriendshipRow,
+  MatchRow,
+  NotificationRow,
+  ProfileSearchRow,
+} from "@/lib/arena/types";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function joinPublicMatch(): Promise<string> {
   const { data, error } = await supabase.rpc("arena_join_public_match");
@@ -22,6 +31,83 @@ export async function joinPrivateMatch(matchId: string): Promise<void> {
     p_match_id: matchId,
   });
   if (error) throw error;
+}
+
+export async function declinePrivateInvite(matchId: string): Promise<void> {
+  const { error } = await supabase.rpc("arena_decline_private_invite", {
+    p_match_id: matchId,
+  });
+  if (error) throw error;
+}
+
+export async function cancelPublicWaitingMatch(matchId: string): Promise<void> {
+  const { error } = await supabase.rpc("arena_cancel_public_waiting", {
+    p_match_id: matchId,
+  });
+  if (error) throw error;
+}
+
+/**
+ * Havuza girer; süre içinde biri siyah olarak katılırsa playing olur.
+ * Aksi halde son bir kez kontrol edilir; hâlâ waiting ise caller iptal RPC çağırmalıdır.
+ */
+export async function joinPublicMatchWithHumanWait(
+  timeoutMs: number
+): Promise<{ matchId: string; humanJoined: boolean }> {
+  const matchId = await joinPublicMatch();
+  const deadline = Date.now() + timeoutMs;
+
+  const isPlaying = async () => {
+    const row = await fetchMatch(matchId);
+    return row?.status === "playing";
+  };
+
+  if (await isPlaying()) {
+    return { matchId, humanJoined: true };
+  }
+
+  while (Date.now() < deadline) {
+    await sleep(350);
+    if (await isPlaying()) {
+      return { matchId, humanJoined: true };
+    }
+  }
+
+  if (await isPlaying()) {
+    return { matchId, humanJoined: true };
+  }
+  return { matchId, humanJoined: false };
+}
+
+export async function listUnreadMatchInvites(
+  userId: string
+): Promise<NotificationRow[]> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("type", "match_invite")
+    .is("read_at", null)
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (error) throw error;
+  return (data ?? []) as NotificationRow[];
+}
+
+export async function fetchProfileDisplayName(
+  userId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("display_name, full_name")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  const row = data as { display_name: string | null; full_name: string | null } | null;
+  if (!row) return null;
+  const d = row.display_name?.trim();
+  const f = row.full_name?.trim();
+  return d || f || null;
 }
 
 export async function fetchMatch(matchId: string): Promise<MatchRow | null> {

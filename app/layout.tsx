@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ArenaInviteBanner } from "@/components/arena/ArenaInviteBanner";
 import { ArenaToastProvider } from "@/components/arena/ArenaToastProvider";
 import { PresenceTracker } from "@/components/arena/PresenceTracker";
 import { ProfileProvider } from "@/components/ProfileProvider";
@@ -35,7 +36,10 @@ export default function RootLayout({
         <SupabaseSessionListener />
         <ProfileProvider>
           <PresenceTracker />
-          <ArenaToastProvider>{children}</ArenaToastProvider>
+          <ArenaToastProvider>
+            <ArenaInviteBanner />
+            {children}
+          </ArenaToastProvider>
         </ProfileProvider>
       </body>
     </html>

@@ -41,6 +41,7 @@ export function ArenaToastProvider({ children }: { children: React.ReactNode }) 
         (payload) => {
           const row = payload.new as NotificationRow;
           if (!row?.id) return;
+          if (row.type === "match_invite") return;
           setQueue((q) => [
             ...q,
             { key: row.id, notification: row },
