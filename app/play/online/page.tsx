@@ -107,10 +107,10 @@ export default function OnlineLobbyPage() {
       >
         <p>Online Arena için giriş yapmalısın.</p>
         <Link
-          href="/"
+          href="/play/bot"
           className={`rounded-lg px-5 py-2.5 text-sm font-semibold text-[#262421] ${arena.green}`}
         >
-          Ana sayfa
+          Bot ekranı
         </Link>
       </div>
     );
@@ -139,7 +139,7 @@ export default function OnlineLobbyPage() {
             }
           />
           <MobileListRow
-            href="/"
+            href="/play/bot"
             thumb={<Cpu className="size-10 text-[#81b64c]" aria-hidden />}
             title="Botlarla oynayın"
             subtitle="Stockfish · Elo güncellemesi"
@@ -230,7 +230,7 @@ export default function OnlineLobbyPage() {
 
         <div className="mb-10 grid gap-4 sm:grid-cols-2">
           <Link
-            href="/"
+            href="/play/bot"
             className={`group flex min-h-[140px] flex-col justify-between rounded-xl border ${arena.border} ${arena.panel} p-5 transition hover:ring-1 hover:ring-white/10`}
           >
             <div className="flex items-start justify-between gap-3">
@@ -298,13 +298,19 @@ function QueueTimeoutNotice({ mobile = false }: { mobile?: boolean }) {
     () => searchParams.get("queueTimeout") === "1",
     [searchParams]
   );
-  if (!queueTimeout) return null;
+  const inviteClosed = useMemo(
+    () => searchParams.get("inviteClosed") === "1",
+    [searchParams]
+  );
+  if (!queueTimeout && !inviteClosed) return null;
 
   if (mobile) {
     return (
       <div className="mx-1 mb-3 rounded-lg border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-sm text-amber-100/95">
-        10 saniye içinde insan rakibi bulunamadı, istersen botla oynayabilirsin.
-        <Link href="/" className="ml-2 font-semibold underline">
+        {queueTimeout
+          ? "10 saniye içinde insan rakibi bulunamadı, istersen botla oynayabilirsin."
+          : "Meydan okuma kapanmış veya reddedilmiş görünüyor."}
+        <Link href="/play/bot" className="ml-2 font-semibold underline">
           Bota git
         </Link>
       </div>
@@ -313,8 +319,10 @@ function QueueTimeoutNotice({ mobile = false }: { mobile?: boolean }) {
 
   return (
     <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-950/40 px-4 py-3 text-sm text-amber-100/95">
-      10 saniye içinde insan rakibi bulunamadı, istersen{" "}
-      <Link href="/" className="font-semibold underline">
+      {queueTimeout
+        ? "10 saniye içinde insan rakibi bulunamadı, istersen "
+        : "Meydan okuma kapanmış veya reddedilmiş görünüyor. İstersen "}
+      <Link href="/play/bot" className="font-semibold underline">
         bot moduna dönebilirsin
       </Link>
       .

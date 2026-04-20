@@ -10,6 +10,7 @@ export const LOSS_FLOOR = 600;
 export const LOSS_DELTA = 20;
 
 export type BotMatchOutcome = "win" | "loss" | "draw";
+export type OnlineMatchOutcome = "win" | "loss" | "draw";
 
 /**
  * Bot (Stockfish) maçı sonrası yeni Elo.
@@ -26,6 +27,21 @@ export function computeEloAfterBotMatch(
     return current > WIN_CAP ? current + WIN_DELTA : WIN_CAP;
   }
   return current < LOSS_FLOOR ? current - LOSS_DELTA : LOSS_FLOOR;
+}
+
+/**
+ * Online maç için klasik Elo güncellemesi.
+ * K=24 ile, rakip Elo'suna göre değişim hesaplanır.
+ */
+export function computeEloAfterOnlineMatch(
+  current: number,
+  opponent: number,
+  outcome: OnlineMatchOutcome
+): number {
+  const k = 24;
+  const score = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
+  const expected = 1 / (1 + 10 ** ((opponent - current) / 400));
+  return Math.max(100, Math.round(current + k * (score - expected)));
 }
 
 /** Ekranda sayıyı yumuşak geçişle güncelle */

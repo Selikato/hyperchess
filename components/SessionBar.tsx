@@ -37,7 +37,10 @@ export function SessionBar() {
       <button
         type="button"
         onClick={() => {
-          void supabase.auth.signOut().then(() => router.refresh());
+          void supabase.auth.signOut().then(() => {
+            router.push("/login");
+            router.refresh();
+          });
         }}
         className={`self-end rounded-md px-2.5 py-1.5 text-xs font-medium sm:px-3 sm:py-2 sm:text-sm ${boardGreen}`}
       >

@@ -84,7 +84,7 @@ export function ArenaShell({
   const { user, elo, profileLoading } = useProfile();
 
   const arenaActive = pathname?.startsWith("/play/online") ?? false;
-  const botActive = pathname === "/";
+  const botActive = pathname?.startsWith("/play/bot") ?? false;
 
   const display =
     (user?.user_metadata?.display_name as string | undefined)?.trim() ||
@@ -125,7 +125,7 @@ export function ArenaShell({
             active={arenaActive}
           />
           <NavItem
-            href="/"
+            href="/play/bot"
             label="Bot ile oyna"
             icon={Cpu}
             active={botActive}
@@ -158,7 +158,10 @@ export function ArenaShell({
                 type="button"
                 title="Çıkış"
                 onClick={() => {
-                  void supabase.auth.signOut().then(() => router.refresh());
+                  void supabase.auth.signOut().then(() => {
+                    router.push("/login");
+                    router.refresh();
+                  });
                 }}
                 className="shrink-0 rounded p-1.5 text-[#9b9893] hover:bg-white/10 hover:text-white"
               >

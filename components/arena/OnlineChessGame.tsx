@@ -11,7 +11,8 @@ import {
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Clock } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, Clock, Crown } from "lucide-react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
 import type { Move, Square } from "chess.js";
@@ -22,14 +23,19 @@ import type {
 } from "react-chessboard";
 import { supabase } from "@/lib/supabaseClient";
 import { useProfile } from "@/components/ProfileProvider";
+import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 import {
   applyMove,
+  fetchProfileDisplayName,
+  fetchProfileElo,
   fetchMatch,
   finishMatch,
   joinPrivateMatch,
+  setOwnProfileElo,
   setCurrentMatch,
 } from "@/lib/arena/api";
 import type { MatchRow } from "@/lib/arena/types";
+import { computeEloAfterOnlineMatch, DEFAULT_ELO } from "@/lib/elo";
 
 const SELECTED_STYLE: CSSProperties = {
   boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
@@ -86,6 +92,7 @@ function MatchPlayerBar({
   eloText,
   clockMs,
   timerVariant,
+  crown,
 }: {
   avatarSrc?: string;
   fallbackLetter: string;
@@ -93,6 +100,7 @@ function MatchPlayerBar({
   eloText: string;
   clockMs: number;
   timerVariant: "dark" | "light";
+  crown?: "win" | "loss" | null;
 }) {
   const timerClass =
     timerVariant === "dark"
@@ -100,7 +108,7 @@ function MatchPlayerBar({
       : "bg-white text-zinc-900 shadow-sm";
 
   return (
-    <div className="flex min-h-[44px] items-center justify-between gap-2 px-0.5 sm:gap-3">
+    <div className="relative flex min-h-[44px] items-center justify-between gap-2 px-0.5 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
         <div className="relative size-9 shrink-0 overflow-hidden rounded border border-white/30 bg-white sm:size-10">
           {avatarSrc ? (
@@ -131,15 +139,31 @@ function MatchPlayerBar({
         />
         {formatClock(clockMs)}
       </div>
+      {crown && (
+        <span
+          className={`absolute -right-2 -top-2 z-20 flex size-6 items-center justify-center rounded-full border ${
+            crown === "win"
+              ? "border-green-300 bg-[#8bcf5f] text-white"
+              : "border-red-300 bg-red-500 text-white"
+          }`}
+          aria-label={crown === "win" ? "Kazanan" : "Kaybeden"}
+        >
+          <Crown className="size-3.5" />
+        </span>
+      )}
     </div>
   );
 }
 
 export function OnlineChessGame({ matchId }: { matchId: string }) {
-  const { user } = useProfile();
+  const router = useRouter();
+  const { user, elo, refreshProfile } = useProfile();
   const gameRef = useRef(new Chess());
   const [match, setMatch] = useState<MatchRow | null>(null);
+  const [nameById, setNameById] = useState<Record<string, string>>({});
   const [fen, setFen] = useState(STARTING_FEN);
+  const [history, setHistory] = useState<string[]>([STARTING_FEN]);
+  const [historyIndex, setHistoryIndex] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -149,6 +173,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     title: "",
     body: "",
   });
+  const [eloDelta, setEloDelta] = useState<number | null>(null);
   const [whiteClockMs, setWhiteClockMs] = useState(MATCH_MS);
   const [blackClockMs, setBlackClockMs] = useState(MATCH_MS);
 
@@ -161,22 +186,59 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   const boardOrientation = myColor === "b" ? "black" : "white";
   const myName =
-    (user?.user_metadata?.display_name as string | undefined) ||
-    (user?.user_metadata?.full_name as string | undefined) ||
+    (user?.user_metadata?.display_name as string | undefined)?.trim() ||
+    (user?.user_metadata?.full_name as string | undefined)?.trim() ||
     user?.email?.split("@")[0] ||
     "Oyuncu";
-  const topName = myColor === "b" ? myName : "Rakip";
-  const bottomName = myColor === "w" ? myName : "Rakip";
+  const whiteName =
+    (match?.white_player_id && nameById[match.white_player_id]) ||
+    (match?.white_player_id === user?.id ? myName : "Beyaz");
+  const blackName =
+    (match?.black_player_id && nameById[match.black_player_id]) ||
+    (match?.black_player_id === user?.id ? myName : "Siyah");
+  const topName = boardOrientation === "white" ? blackName : whiteName;
+  const bottomName = boardOrientation === "white" ? whiteName : blackName;
+
+  const knownMatchOnceRef = useRef(false);
+  const eloAppliedRef = useRef(false);
+  const confettiPlayedRef = useRef(false);
+  const historyIndexRef = useRef(0);
+
+  const applyFenSnapshot = useCallback((nextFen: string) => {
+    setHistory((prev) => {
+      const base = prev.slice(0, historyIndexRef.current + 1);
+      if (base[base.length - 1] === nextFen) {
+        setHistoryIndex(base.length - 1);
+        historyIndexRef.current = base.length - 1;
+        return base;
+      }
+      const next = [...base, nextFen];
+      setHistoryIndex(next.length - 1);
+      historyIndexRef.current = next.length - 1;
+      return next;
+    });
+    setFen(nextFen);
+  }, []);
 
   const loadRow = useCallback(async () => {
     try {
       const row = await fetchMatch(matchId);
+      if (!row) {
+        if (knownMatchOnceRef.current) {
+          router.replace("/play/online?inviteClosed=1");
+          return;
+        }
+        setMatch(null);
+        setLoadError("Maç bulunamadı.");
+        return;
+      }
+      knownMatchOnceRef.current = true;
       setMatch(row);
-      setLoadError(row ? null : "Maç bulunamadı.");
-      if (row?.fen) {
+      setLoadError(null);
+      if (row.fen) {
         try {
           gameRef.current.load(row.fen);
-          setFen(gameRef.current.fen());
+          applyFenSnapshot(gameRef.current.fen());
         } catch {
           setLoadError("Geçersiz FEN.");
         }
@@ -184,13 +246,22 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Yüklenemedi.");
     }
-  }, [matchId]);
+  }, [matchId, router, applyFenSnapshot]);
 
   useEffect(() => {
     startTransition(() => {
       void loadRow();
     });
   }, [loadRow]);
+
+  useEffect(() => {
+    eloAppliedRef.current = false;
+    confettiPlayedRef.current = false;
+    setEloDelta(null);
+    setHistory([STARTING_FEN]);
+    setHistoryIndex(0);
+    historyIndexRef.current = 0;
+  }, [matchId]);
 
   const attemptedPrivateJoin = useRef(false);
   useEffect(() => {
@@ -219,6 +290,28 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }, [matchId]);
 
   useEffect(() => {
+    if (!match) return;
+    const ids = [match.white_player_id, match.black_player_id].filter(
+      (id): id is string => Boolean(id)
+    );
+    if (!ids.length) return;
+    const missing = ids.filter((id) => !nameById[id]);
+    if (!missing.length) return;
+    void Promise.all(
+      missing.map(async (id) => ({
+        id,
+        name: (await fetchProfileDisplayName(id)) ?? "Oyuncu",
+      }))
+    ).then((rows) => {
+      setNameById((prev) => {
+        const next = { ...prev };
+        for (const row of rows) next[row.id] = row.name;
+        return next;
+      });
+    });
+  }, [match, nameById]);
+
+  useEffect(() => {
     const channel = supabase
       .channel(`match:${matchId}`)
       .on(
@@ -235,7 +328,9 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           if (row.fen) {
             try {
               gameRef.current.load(row.fen);
-              setFen(gameRef.current.fen());
+              if (gameRef.current.fen() !== fen) {
+                applyFenSnapshot(gameRef.current.fen());
+              }
             } catch {
               /* ignore */
             }
@@ -254,12 +349,24 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           }
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "matches",
+          filter: `id=eq.${matchId}`,
+        },
+        () => {
+          router.replace("/play/online?inviteClosed=1");
+        }
+      )
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [matchId, user?.id]);
+  }, [matchId, user?.id, router, applyFenSnapshot, fen]);
 
   useEffect(() => {
     if (!match || match.status !== "playing" || modal.open) return;
@@ -274,8 +381,51 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }, [match?.id, match?.status, match?.turn, modal.open]);
 
   useEffect(() => {
+    if (!match || !user || myColor === null) return;
+    if (match.status !== "finished" || eloAppliedRef.current) return;
+    const opponentId =
+      myColor === "w" ? match.black_player_id : match.white_player_id;
+    if (!opponentId) return;
+
+    eloAppliedRef.current = true;
+    const outcome: "win" | "loss" | "draw" =
+      match.winner_id == null ? "draw" : match.winner_id === user.id ? "win" : "loss";
+
+    void (async () => {
+      const myElo = elo ?? DEFAULT_ELO;
+      const oppElo = (await fetchProfileElo(opponentId)) ?? DEFAULT_ELO;
+      const nextElo = computeEloAfterOnlineMatch(myElo, oppElo, outcome);
+      if (nextElo !== myElo) {
+        await setOwnProfileElo(nextElo);
+      }
+      setEloDelta(nextElo - myElo);
+      await refreshProfile();
+    })().catch(() => {
+      eloAppliedRef.current = false;
+      setBanner("Puan güncellenemedi. Lütfen tekrar dene.");
+    });
+  }, [match, user, myColor, elo, refreshProfile]);
+
+  useEffect(() => {
+    if (!match || !user) return;
+    if (match.status !== "finished" || match.winner_id !== user.id || confettiPlayedRef.current) {
+      return;
+    }
+    confettiPlayedRef.current = true;
+    void import("canvas-confetti")
+      .then(({ default: confetti }) => {
+        confetti({
+          particleCount: 120,
+          spread: 85,
+          origin: { y: 0.65 },
+        });
+      })
+      .catch(() => undefined);
+  }, [match, user]);
+
+  useEffect(() => {
     if (!match) return;
-    if (match.status !== "waiting" && match.status !== "playing") return;
+    if (match.status !== "waiting") return;
     const id = setInterval(() => {
       void loadRow();
     }, 2500);
@@ -286,6 +436,28 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     match?.status === "waiting" &&
     myColor === "w" &&
     match.black_player_id == null;
+
+  const winnerColor: "w" | "b" | null = useMemo(() => {
+    if (!match?.winner_id) return null;
+    if (match.winner_id === match.white_player_id) return "w";
+    if (match.winner_id === match.black_player_id) return "b";
+    return null;
+  }, [match]);
+
+  const topColor: "w" | "b" = boardOrientation === "white" ? "b" : "w";
+  const bottomColor: "w" | "b" = boardOrientation === "white" ? "w" : "b";
+  const topCrown: "win" | "loss" | null =
+    match?.status === "finished" && winnerColor
+      ? winnerColor === topColor
+        ? "win"
+        : "loss"
+      : null;
+  const bottomCrown: "win" | "loss" | null =
+    match?.status === "finished" && winnerColor
+      ? winnerColor === bottomColor
+        ? "win"
+        : "loss"
+      : null;
 
   useEffect(() => {
     if (!match?.id) return;
@@ -298,7 +470,8 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     match?.status === "playing" &&
     myColor !== null &&
     match.turn === myColor &&
-    !modal.open;
+    !modal.open &&
+    historyIndex === history.length - 1;
 
   const clearSel = useCallback(() => {
     setSelected(null);
@@ -318,7 +491,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
       if (!user || !match || myColor === null) return;
       const gameOver = g.isGameOver();
       gameRef.current.load(g.fen());
-      setFen(g.fen());
+      applyFenSnapshot(g.fen());
       clearSel();
       try {
         await applyMove(match.id, g.fen(), g.turn());
@@ -341,7 +514,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
         void loadRow();
       }
     },
-    [user, match, myColor, clearSel, loadRow]
+    [user, match, myColor, clearSel, loadRow, applyFenSnapshot]
   );
 
   const tryLocalMove = useCallback(
@@ -501,6 +674,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           eloText="?"
           clockMs={boardOrientation === "white" ? blackClockMs : whiteClockMs}
           timerVariant="dark"
+          crown={topCrown}
         />
         <div className="relative w-full overflow-hidden rounded-sm shadow-md">
           <Chessboard
@@ -516,6 +690,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
               allowDragging: true,
               allowDrawingArrows: false,
               clearArrowsOnPositionChange: true,
+              pieces: MAESTRO_PIECES,
               canDragPiece: canDragPieceCb,
               onSquareClick,
               onPieceClick,
@@ -529,10 +704,43 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           eloText="?"
           clockMs={boardOrientation === "white" ? whiteClockMs : blackClockMs}
           timerVariant="light"
+          crown={bottomCrown}
         />
       </div>
 
       <div className="relative mt-1 flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (historyIndex <= 0) return;
+            const idx = historyIndex - 1;
+            historyIndexRef.current = idx;
+            setHistoryIndex(idx);
+            setFen(history[idx]);
+            clearSel();
+          }}
+          disabled={historyIndex <= 0}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-500 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+        >
+          <ChevronLeft className="size-4" />
+          Geri
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (historyIndex >= history.length - 1) return;
+            const idx = historyIndex + 1;
+            historyIndexRef.current = idx;
+            setHistoryIndex(idx);
+            setFen(history[idx]);
+            clearSel();
+          }}
+          disabled={historyIndex >= history.length - 1}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-500 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+        >
+          İleri
+          <ChevronRight className="size-4" />
+        </button>
         <button
           type="button"
           onClick={() => void resign()}
@@ -562,6 +770,11 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
             <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
               {modal.body}
             </p>
+            {eloDelta !== null && (
+              <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-300">
+                Elo değişimi: {eloDelta > 0 ? `+${eloDelta}` : eloDelta}
+              </p>
+            )}
             <Link
               href="/play/online"
               className="mt-6 flex w-full items-center justify-center rounded-md border border-[#5a7a45] bg-[#739552] py-2.5 text-sm font-semibold text-white"

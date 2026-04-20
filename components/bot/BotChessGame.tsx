@@ -18,6 +18,7 @@ import {
   parseUciBestmove,
 } from "@/lib/stockfish/browserEngine";
 import { useProfile } from "@/components/ProfileProvider";
+import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 import {
   animateEloNumber,
   computeEloAfterBotMatch,
@@ -583,6 +584,7 @@ export function BotChessGame() {
               allowDragging: true,
               allowDrawingArrows: false,
               clearArrowsOnPositionChange: true,
+              pieces: MAESTRO_PIECES,
               canDragPiece: canDragPieceCb,
               onSquareClick,
               onPieceClick,

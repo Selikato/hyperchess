@@ -110,6 +110,31 @@ export async function fetchProfileDisplayName(
   return d || f || null;
 }
 
+export async function fetchProfileElo(userId: string): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("elo")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  const row = data as { elo: number | null } | null;
+  return typeof row?.elo === "number" ? row.elo : null;
+}
+
+export async function setOwnProfileElo(nextElo: number): Promise<void> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const uid = session?.user?.id;
+  if (!uid) throw new Error("not authenticated");
+
+  const { error } = await supabase
+    .from("profiles")
+    .update({ elo: nextElo, updated_at: new Date().toISOString() })
+    .eq("id", uid);
+  if (error) throw error;
+}
+
 export async function fetchMatch(matchId: string): Promise<MatchRow | null> {
   const { data, error } = await supabase
     .from("matches")
