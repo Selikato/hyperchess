@@ -4,6 +4,8 @@ import type {
   MatchRow,
   NotificationRow,
   ProfileSearchRow,
+  TournamentParticipantRow,
+  TournamentRow,
 } from "@/lib/arena/types";
 
 function sleep(ms: number): Promise<void> {
@@ -245,6 +247,21 @@ export async function markNotificationRead(
   if (error) throw error;
 }
 
+export async function listUnreadNotifications(
+  userId: string,
+  limit = 20
+): Promise<NotificationRow[]> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("*")
+    .eq("user_id", userId)
+    .is("read_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as NotificationRow[];
+}
+
 export async function setProfileOnlineState(isOnline: boolean): Promise<void> {
   const {
     data: { session },
@@ -276,4 +293,98 @@ export async function setCurrentMatch(matchId: string | null): Promise<void> {
 
 export function otherFriendId(row: FriendshipRow, me: string): string {
   return row.user_id === me ? row.friend_id : row.user_id;
+}
+
+export async function listTournaments(): Promise<TournamentRow[]> {
+  const { data, error } = await supabase
+    .from("tournaments")
+    .select("*")
+    .order("start_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as TournamentRow[];
+}
+
+export async function fetchTournament(tournamentId: string): Promise<TournamentRow | null> {
+  const { data, error } = await supabase
+    .from("tournaments")
+    .select("*")
+    .eq("id", tournamentId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as TournamentRow | null;
+}
+
+export async function listTournamentParticipants(
+  tournamentId: string
+): Promise<TournamentParticipantRow[]> {
+  const { data, error } = await supabase
+    .from("tournament_participants")
+    .select("tournament_id,user_id,score,profiles!inner(display_name,full_name,elo)")
+    .eq("tournament_id", tournamentId)
+    .order("score", { ascending: false });
+  if (error) throw error;
+  const rows = (data ?? []) as Array<{
+    tournament_id: string;
+    user_id: string;
+    score: number;
+    profiles:
+      | { display_name: string | null; full_name: string | null; elo: number | null }
+      | Array<{ display_name: string | null; full_name: string | null; elo: number | null }>;
+  }>;
+  return rows.map((r) => {
+    const profile = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
+    return {
+      tournament_id: r.tournament_id,
+      user_id: r.user_id,
+      score: r.score,
+      display_name: profile?.display_name ?? null,
+      full_name: profile?.full_name ?? null,
+      elo: profile?.elo ?? null,
+    };
+  });
+}
+
+export async function joinTournament(tournamentId: string): Promise<void> {
+  const { error } = await supabase.rpc("arena_join_tournament", {
+    p_tournament_id: tournamentId,
+  });
+  if (error) throw error;
+}
+
+export async function startTournament(tournamentId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("arena_start_tournament", {
+    p_tournament_id: tournamentId,
+  });
+  if (error) throw error;
+  return Number(data ?? 0);
+}
+
+export async function maybeStartTournament(tournamentId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("arena_maybe_start_tournament", {
+    p_tournament_id: tournamentId,
+  });
+  if (error) throw error;
+  return Boolean(data);
+}
+
+export async function createTournament(
+  title: string,
+  description: string,
+  startAt?: string
+): Promise<string> {
+  const { data, error } = await supabase.rpc("arena_create_tournament", {
+    p_title: title,
+    p_description: description || null,
+    p_start_at: startAt || null,
+  });
+  if (error) throw error;
+  if (!data || typeof data !== "string") throw new Error("Turnuva oluşturulamadı.");
+  return data;
+}
+
+export async function deleteTournament(tournamentId: string): Promise<void> {
+  const { error } = await supabase.rpc("arena_delete_tournament", {
+    p_tournament_id: tournamentId,
+  });
+  if (error) throw error;
 }

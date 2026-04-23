@@ -133,6 +133,15 @@ export function ArenaShell({
           <NavItem href="#" label="Bulmacalar" icon={Puzzle} active={false} disabled />
           <NavItem href="#" label="Öğren" icon={BookOpen} active={false} disabled />
           <NavItem href="#" label="Lig" icon={Trophy} active={false} disabled />
+          <div className="px-3 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[#77a047]">
+            Turnuvalar
+          </div>
+          <NavItem
+            href="/play/online/tournaments"
+            label="Turnuva Merkezi"
+            icon={Trophy}
+            active={pathname?.startsWith("/play/online/tournaments") ?? false}
+          />
         </nav>
 
         <div className="mt-auto border-t border-white/5 p-2">

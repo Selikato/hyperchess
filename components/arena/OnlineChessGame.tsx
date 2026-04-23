@@ -201,8 +201,9 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   const knownMatchOnceRef = useRef(false);
   const eloAppliedRef = useRef(false);
-  const confettiPlayedRef = useRef(false);
   const historyIndexRef = useRef(0);
+  const fenRef = useRef(STARTING_FEN);
+  const lastServerUpdateRef = useRef<string | null>(null);
 
   const applyFenSnapshot = useCallback((nextFen: string) => {
     setHistory((prev) => {
@@ -218,6 +219,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
       return next;
     });
     setFen(nextFen);
+    fenRef.current = nextFen;
   }, []);
 
   const loadRow = useCallback(async () => {
@@ -234,6 +236,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
       }
       knownMatchOnceRef.current = true;
       setMatch(row);
+      lastServerUpdateRef.current = row.updated_at;
       setLoadError(null);
       if (row.fen) {
         try {
@@ -249,6 +252,10 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }, [matchId, router, applyFenSnapshot]);
 
   useEffect(() => {
+    fenRef.current = fen;
+  }, [fen]);
+
+  useEffect(() => {
     startTransition(() => {
       void loadRow();
     });
@@ -256,7 +263,6 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   useEffect(() => {
     eloAppliedRef.current = false;
-    confettiPlayedRef.current = false;
     setEloDelta(null);
     setHistory([STARTING_FEN]);
     setHistoryIndex(0);
@@ -325,11 +331,14 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
         (payload) => {
           const row = payload.new as MatchRow;
           setMatch(row);
+          lastServerUpdateRef.current = row.updated_at;
           if (row.fen) {
             try {
+              const before = fenRef.current;
               gameRef.current.load(row.fen);
-              if (gameRef.current.fen() !== fen) {
-                applyFenSnapshot(gameRef.current.fen());
+              const serverFen = gameRef.current.fen();
+              if (serverFen !== before) {
+                applyFenSnapshot(serverFen);
               }
             } catch {
               /* ignore */
@@ -366,7 +375,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [matchId, user?.id, router, applyFenSnapshot, fen]);
+  }, [matchId, user?.id, router, applyFenSnapshot]);
 
   useEffect(() => {
     if (!match || match.status !== "playing" || modal.open) return;
@@ -407,23 +416,6 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }, [match, user, myColor, elo, refreshProfile]);
 
   useEffect(() => {
-    if (!match || !user) return;
-    if (match.status !== "finished" || match.winner_id !== user.id || confettiPlayedRef.current) {
-      return;
-    }
-    confettiPlayedRef.current = true;
-    void import("canvas-confetti")
-      .then(({ default: confetti }) => {
-        confetti({
-          particleCount: 120,
-          spread: 85,
-          origin: { y: 0.65 },
-        });
-      })
-      .catch(() => undefined);
-  }, [match, user]);
-
-  useEffect(() => {
     if (!match) return;
     if (match.status !== "waiting") return;
     const id = setInterval(() => {
@@ -431,6 +423,37 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     }, 2500);
     return () => clearInterval(id);
   }, [match?.id, match?.status, loadRow]);
+
+  useEffect(() => {
+    if (!match || match.status !== "playing") return;
+    const id = setInterval(() => {
+      void fetchMatch(matchId)
+        .then((row) => {
+          if (!row || row.status !== "playing") return;
+          if (
+            lastServerUpdateRef.current &&
+            row.updated_at <= lastServerUpdateRef.current
+          ) {
+            return;
+          }
+          lastServerUpdateRef.current = row.updated_at;
+          setMatch(row);
+          if (!row.fen) return;
+          try {
+            const before = fenRef.current;
+            gameRef.current.load(row.fen);
+            const serverFen = gameRef.current.fen();
+            if (serverFen !== before) {
+              applyFenSnapshot(serverFen);
+            }
+          } catch {
+            /* ignore */
+          }
+        })
+        .catch(() => undefined);
+    }, 1200);
+    return () => clearInterval(id);
+  }, [matchId, match?.status, applyFenSnapshot]);
 
   const waitingOpponent =
     match?.status === "waiting" &&
@@ -688,7 +711,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
               darkSquareStyle: { backgroundColor: "#739552" },
               showNotation: true,
               allowDragging: true,
-              allowDrawingArrows: false,
+              allowDrawingArrows: true,
               clearArrowsOnPositionChange: true,
               pieces: MAESTRO_PIECES,
               canDragPiece: canDragPieceCb,

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Image from "next/image";
-import { Clock } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Crown } from "lucide-react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
 import type { Move, Square } from "chess.js";
@@ -101,6 +101,7 @@ function MatchPlayerBar({
   eloText,
   clockMs,
   timerVariant,
+  crown,
 }: {
   avatarSrc?: string;
   fallbackLetter: string;
@@ -108,6 +109,7 @@ function MatchPlayerBar({
   eloText: string;
   clockMs: number;
   timerVariant: "dark" | "light";
+  crown?: "win" | "loss" | null;
 }) {
   const timerClass =
     timerVariant === "dark"
@@ -115,7 +117,7 @@ function MatchPlayerBar({
       : "bg-white text-zinc-900 shadow-sm";
 
   return (
-    <div className="flex min-h-[44px] items-center justify-between gap-2 px-0.5 sm:gap-3">
+    <div className="relative flex min-h-[44px] items-center justify-between gap-2 px-0.5 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
         <div className="relative size-9 shrink-0 overflow-hidden rounded border border-white/30 bg-white sm:size-10">
           {avatarSrc ? (
@@ -146,6 +148,17 @@ function MatchPlayerBar({
         />
         {formatClock(clockMs)}
       </div>
+      {crown && (
+        <span
+          className={`absolute -right-2 -top-2 z-20 flex size-6 items-center justify-center rounded-full border ${
+            crown === "win"
+              ? "border-green-300 bg-[#8bcf5f] text-white"
+              : "border-red-300 bg-red-500 text-white"
+          }`}
+        >
+          <Crown className="size-3.5" />
+        </span>
+      )}
     </div>
   );
 }
@@ -161,6 +174,8 @@ export function BotChessGame() {
   const eloAnimatingRef = useRef(false);
 
   const [fen, setFen] = useState(() => game.fen());
+  const [history, setHistory] = useState<string[]>([game.fen()]);
+  const [historyIndex, setHistoryIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, CSSProperties>>({});
   const [thinking, setThinking] = useState(false);
@@ -187,6 +202,7 @@ export function BotChessGame() {
   const engineRef = useRef<StockfishBrowserEngine | null>(null);
   const botBusyRef = useRef(false);
   const runBotMoveRef = useRef<() => Promise<void>>(async () => {});
+  const historyIndexRef = useRef(0);
 
   const previousEvalRef = useRef<number | null>(null);
 
@@ -290,7 +306,24 @@ export function BotChessGame() {
     engineReady === "ready" &&
     !thinking &&
     !modal.open &&
-    game.turn() === "w";
+    game.turn() === "w" &&
+    historyIndex === history.length - 1;
+
+  const pushFenSnapshot = useCallback((nextFen: string) => {
+    setHistory((prev) => {
+      const trimmed = prev.slice(0, historyIndexRef.current + 1);
+      if (trimmed[trimmed.length - 1] === nextFen) {
+        setHistoryIndex(trimmed.length - 1);
+        historyIndexRef.current = trimmed.length - 1;
+        return trimmed;
+      }
+      const next = [...trimmed, nextFen];
+      setHistoryIndex(next.length - 1);
+      historyIndexRef.current = next.length - 1;
+      return next;
+    });
+    setFen(nextFen);
+  }, []);
 
   const canDragPieceCb = useCallback(
     ({
@@ -317,19 +350,14 @@ export function BotChessGame() {
           promotion: "q",
         });
         if (!m) return false;
-        setFen(game.fen());
+        pushFenSnapshot(game.fen());
         clearSel();
         const end = outcomeAfterMove(game);
         if (end) {
           setModal({
             open: true,
             title: "Oyun bitti",
-            body:
-              end === "win"
-                ? "Kazandın — mat."
-                : end === "loss"
-                  ? "Kaybettin — mat."
-                  : "Beraberlik.",
+            body: end === "draw" ? "Beraberlik." : "Oyun bitti.",
             outcome: end,
           });
           return true;
@@ -340,7 +368,7 @@ export function BotChessGame() {
         return false;
       }
     },
-    [canInteract, clearSel, game]
+    [canInteract, clearSel, game, pushFenSnapshot]
   );
 
   const runBotMove = useCallback(async () => {
@@ -366,7 +394,7 @@ export function BotChessGame() {
         setBanner("Hata oluştu, tekrar dene.");
         return;
       }
-      setFen(game.fen());
+      pushFenSnapshot(game.fen());
       setBanner(null);
 
       const postEval = await eng.evaluateFen(game.fen(), depth);
@@ -377,12 +405,7 @@ export function BotChessGame() {
         setModal({
           open: true,
           title: "Oyun bitti",
-          body:
-            end === "win"
-              ? "Kazandın."
-              : end === "loss"
-                ? "Kaybettin — mat."
-                : "Beraberlik.",
+          body: end === "draw" ? "Beraberlik." : "Oyun bitti.",
           outcome: end,
         });
       }
@@ -392,7 +415,7 @@ export function BotChessGame() {
       setThinking(false);
       botBusyRef.current = false;
     }
-  }, [depth, engineReady, game, normalizeEvalForWhite, pushAnalysisDelta]);
+  }, [depth, engineReady, game, normalizeEvalForWhite, pushAnalysisDelta, pushFenSnapshot]);
 
   useEffect(() => {
     runBotMoveRef.current = runBotMove;
@@ -487,6 +510,9 @@ export function BotChessGame() {
     engineRef.current?.ucinewGame();
     game.reset();
     setFen(game.fen());
+    setHistory([game.fen()]);
+    setHistoryIndex(0);
+    historyIndexRef.current = 0;
     clearSel();
     setAnalysisBadge(null);
     previousEvalRef.current = null;
@@ -500,6 +526,19 @@ export function BotChessGame() {
     matchStartEloRef.current = base;
     setLiveElo(base);
   }, [clearSel, game, elo]);
+
+  const topCrown: "win" | "loss" | null =
+    (modal.outcome === "loss" || modal.outcome === "resign")
+      ? "win"
+      : modal.outcome === "win"
+        ? "loss"
+        : null;
+  const bottomCrown: "win" | "loss" | null =
+    modal.outcome === "win"
+      ? "win"
+      : (modal.outcome === "loss" || modal.outcome === "resign")
+        ? "loss"
+        : null;
 
   const persistEloAndClose = async (outcome: ModalOutcome) => {
     setModal((m) => ({ ...m, open: false }));
@@ -563,6 +602,7 @@ export function BotChessGame() {
           eloText="600"
           clockMs={blackClockMs}
           timerVariant="dark"
+          crown={topCrown}
         />
         <div className="relative w-full overflow-hidden rounded-sm shadow-md">
           {analysisBadge && (
@@ -582,7 +622,7 @@ export function BotChessGame() {
               showNotation: true,
               /** false iken bazı tarayıcılarda tıklama/sürükleme birlikte kilitlenebiliyor */
               allowDragging: true,
-              allowDrawingArrows: false,
+              allowDrawingArrows: true,
               clearArrowsOnPositionChange: true,
               pieces: MAESTRO_PIECES,
               canDragPiece: canDragPieceCb,
@@ -598,10 +638,43 @@ export function BotChessGame() {
           eloText={displayEloForBar}
           clockMs={whiteClockMs}
           timerVariant="light"
+          crown={bottomCrown}
         />
       </div>
 
       <div className="relative mt-1 flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (historyIndex <= 0) return;
+            const idx = historyIndex - 1;
+            setHistoryIndex(idx);
+            historyIndexRef.current = idx;
+            setFen(history[idx]);
+            clearSel();
+          }}
+          disabled={historyIndex <= 0}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-500 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+        >
+          <ChevronLeft className="size-4" />
+          Geri
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (historyIndex >= history.length - 1) return;
+            const idx = historyIndex + 1;
+            setHistoryIndex(idx);
+            historyIndexRef.current = idx;
+            setFen(history[idx]);
+            clearSel();
+          }}
+          disabled={historyIndex >= history.length - 1}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-500 px-3 py-2 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
+        >
+          İleri
+          <ChevronRight className="size-4" />
+        </button>
         <button
           type="button"
           onClick={resign}

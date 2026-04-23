@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ArenaInviteBanner } from "@/components/arena/ArenaInviteBanner";
+import { NotificationInbox } from "@/components/arena/NotificationInbox";
 import { ArenaToastProvider } from "@/components/arena/ArenaToastProvider";
 import { PresenceTracker } from "@/components/arena/PresenceTracker";
 import { ProfileProvider } from "@/components/ProfileProvider";
@@ -37,6 +38,7 @@ export default function RootLayout({
         <ProfileProvider>
           <PresenceTracker />
           <ArenaToastProvider>
+            <NotificationInbox />
             <ArenaInviteBanner />
             {children}
           </ArenaToastProvider>

@@ -7,6 +7,7 @@ import { BookOpen, Clock, Cpu, GraduationCap } from "lucide-react";
 import { ActiveMatchesStrip } from "@/components/arena/ActiveMatchesStrip";
 import { arena, ArenaShell } from "@/components/arena/ArenaShell";
 import { FriendsPanel } from "@/components/arena/FriendsPanel";
+import { TournamentsCard } from "@/components/arena/TournamentsCard";
 import { useProfile } from "@/components/ProfileProvider";
 import {
   cancelPublicWaitingMatch,
@@ -252,15 +253,7 @@ export default function OnlineLobbyPage() {
             <span className="mt-4 text-sm font-semibold text-[#81b64c]">Oyuna git →</span>
           </Link>
 
-          <div
-            className={`flex min-h-[140px] flex-col justify-center rounded-xl border border-dashed ${arena.border} bg-[#262421]/80 p-5`}
-          >
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#9b9893]">
-              Yakında
-            </p>
-            <h3 className="mt-1 text-lg font-bold text-white/80">Bulmacalar</h3>
-            <p className="mt-2 text-sm text-[#6b6863]">Taktik modu üzerinde çalışıyoruz.</p>
-          </div>
+          <TournamentsCard />
         </div>
 
         <section>

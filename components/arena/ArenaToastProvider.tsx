@@ -64,14 +64,19 @@ export function ArenaToastProvider({ children }: { children: React.ReactNode }) 
       >
         {queue.map(({ key, notification: n }) => {
           const matchId = n.payload?.match_id as string | undefined;
+          const tournamentId = n.payload?.tournament_id as string | undefined;
           const title =
             n.type === "friend_request"
               ? "Arkadaşlık isteği"
-              : "Maç daveti";
+              : n.type === "tournament_created"
+                ? "Turnuva bildirimi"
+                : "Maç daveti";
           const body =
             n.type === "friend_request"
               ? "Bir oyuncu seni arkadaş olarak eklemek istiyor."
-              : "Özel bir maça davet edildin.";
+              : n.type === "tournament_created"
+                ? `${n.payload?.creator_name ?? "Bir oyuncu"} yeni turnuva oluşturdu.`
+                : "Özel bir maça davet edildin.";
 
           return (
             <div
@@ -100,6 +105,18 @@ export function ArenaToastProvider({ children }: { children: React.ReactNode }) 
                     }}
                   >
                     Arenaya git
+                  </button>
+                )}
+                {n.type === "tournament_created" && tournamentId && (
+                  <button
+                    type="button"
+                    className="rounded-md border border-[#5a7a45] bg-[#739552] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
+                    onClick={() => {
+                      void dismiss(key, n);
+                      router.push(`/play/online/tournaments/${tournamentId}`);
+                    }}
+                  >
+                    Turnuvayı Aç
                   </button>
                 )}
                 <button
