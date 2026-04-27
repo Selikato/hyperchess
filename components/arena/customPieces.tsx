@@ -7,6 +7,7 @@ type PieceRenderer = (props?: {
 }) => JSX.Element;
 
 function renderPiece(piece: string): PieceRenderer {
+  const isWhite = piece.startsWith("w");
   return (props) => (
     <img
       src={`/pieces/chesscom-neo/${piece}.png`}
@@ -17,6 +18,9 @@ function renderPiece(piece: string): PieceRenderer {
         height: "100%",
         pointerEvents: "none",
         userSelect: "none",
+        filter: isWhite
+          ? "sepia(0.38) saturate(0.78) brightness(1.1) hue-rotate(350deg)"
+          : undefined,
         ...props?.svgStyle,
       }}
     />

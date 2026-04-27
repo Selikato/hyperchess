@@ -12,7 +12,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Clock, Crown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Crown, Equal, Flag } from "lucide-react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
 import type { Move, Square } from "chess.js";
@@ -26,6 +26,7 @@ import { useProfile } from "@/components/ProfileProvider";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 import {
   applyMove,
+  refreshLeagues,
   fetchProfileDisplayName,
   fetchProfileElo,
   fetchMatch,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/arena/api";
 import type { MatchRow } from "@/lib/arena/types";
 import { computeEloAfterOnlineMatch, DEFAULT_ELO } from "@/lib/elo";
+import { saveAnalysisSession } from "@/lib/analysis/session";
 
 const SELECTED_STYLE: CSSProperties = {
   boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
@@ -85,6 +87,62 @@ function formatClock(ms: number) {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
+type MaterialPiece = "p" | "n" | "b" | "r" | "q";
+const MATERIAL_VALUES: Record<MaterialPiece, number> = {
+  p: 1,
+  n: 3,
+  b: 3,
+  r: 5,
+  q: 9,
+};
+const MATERIAL_ORDER: MaterialPiece[] = ["q", "r", "b", "n", "p"];
+const PIECE_TO_ASSET: Record<MaterialPiece, { white: string; black: string }> = {
+  q: { white: "wQ", black: "bQ" },
+  r: { white: "wR", black: "bR" },
+  b: { white: "wB", black: "bB" },
+  n: { white: "wN", black: "bN" },
+  p: { white: "wP", black: "bP" },
+};
+
+function getMaterialInfoFromFen(boardFen: string) {
+  const whiteLeft: Record<MaterialPiece, number> = { p: 0, n: 0, b: 0, r: 0, q: 0 };
+  const blackLeft: Record<MaterialPiece, number> = { p: 0, n: 0, b: 0, r: 0, q: 0 };
+  const board = boardFen.split(" ")[0] ?? "";
+  for (const ch of board) {
+    const low = ch.toLowerCase();
+    if (!(low in MATERIAL_VALUES)) continue;
+    const piece = low as MaterialPiece;
+    if (ch === low) blackLeft[piece] += 1;
+    else whiteLeft[piece] += 1;
+  }
+
+  const start: Record<MaterialPiece, number> = { p: 8, n: 2, b: 2, r: 2, q: 1 };
+  const capturedByWhite = MATERIAL_ORDER.flatMap((piece) => {
+    const count = start[piece] - blackLeft[piece];
+    return count > 0 ? [{ piece: PIECE_TO_ASSET[piece].black, count }] : [];
+  });
+  const capturedByBlack = MATERIAL_ORDER.flatMap((piece) => {
+    const count = start[piece] - whiteLeft[piece];
+    return count > 0 ? [{ piece: PIECE_TO_ASSET[piece].white, count }] : [];
+  });
+
+  const whitePoints = MATERIAL_ORDER.reduce(
+    (sum, piece) => sum + (start[piece] - blackLeft[piece]) * MATERIAL_VALUES[piece],
+    0,
+  );
+  const blackPoints = MATERIAL_ORDER.reduce(
+    (sum, piece) => sum + (start[piece] - whiteLeft[piece]) * MATERIAL_VALUES[piece],
+    0,
+  );
+
+  return {
+    capturedByWhite,
+    capturedByBlack,
+    whiteDelta: whitePoints - blackPoints,
+    blackDelta: blackPoints - whitePoints,
+  };
+}
+
 function MatchPlayerBar({
   avatarSrc,
   fallbackLetter,
@@ -93,6 +151,8 @@ function MatchPlayerBar({
   clockMs,
   timerVariant,
   crown,
+  captured,
+  materialDelta,
 }: {
   avatarSrc?: string;
   fallbackLetter: string;
@@ -100,7 +160,9 @@ function MatchPlayerBar({
   eloText: string;
   clockMs: number;
   timerVariant: "dark" | "light";
-  crown?: "win" | "loss" | null;
+  crown?: "win" | "loss" | "draw" | null;
+  captured: Array<{ piece: string; count: number }>;
+  materialDelta: number;
 }) {
   const timerClass =
     timerVariant === "dark"
@@ -125,30 +187,79 @@ function MatchPlayerBar({
             </div>
           )}
         </div>
-        <div className="min-w-0 truncate text-[14px] font-semibold text-white sm:text-[15px]">
-          {name}{" "}
-          <span className="font-normal text-zinc-300">({eloText})</span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[14px] font-semibold text-white sm:text-[15px]">
+            {name} <span className="font-normal text-zinc-300">({eloText})</span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-0.5 text-[11px] text-zinc-300">
+            {captured.length === 0 ? (
+              <span className="text-zinc-500">-</span>
+            ) : (
+              captured.flatMap((item) =>
+                Array.from({ length: item.count }).map((_, idx) => {
+                  const isPawn = item.piece.endsWith("P");
+                  return (
+                    <span
+                      key={`${item.piece}-${idx}`}
+                      className={`relative inline-block ${isPawn ? "size-3.5" : "size-5"}`}
+                    >
+                      <Image
+                        src={`/pieces/chesscom-neo/${item.piece}.png`}
+                        alt=""
+                        fill
+                        sizes="14px"
+                        className="object-contain"
+                      />
+                    </span>
+                  );
+                }),
+              )
+            )}
+          </div>
         </div>
       </div>
-      <div
-        className={`flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[13px] font-semibold tabular-nums sm:gap-1.5 sm:px-2.5 sm:text-sm ${timerClass}`}
-      >
-        <Clock
-          className={`size-3.5 sm:size-4 ${timerVariant === "light" ? "text-zinc-700" : "opacity-90"}`}
-          aria-hidden
-        />
-        {formatClock(clockMs)}
+      <div className="flex shrink-0 items-center gap-1.5">
+        <span
+          className={`rounded px-1.5 py-1 text-[11px] font-bold tabular-nums ${
+            materialDelta > 0
+              ? "bg-[#81b64c]/20 text-[#b7df8a]"
+              : materialDelta < 0
+                ? "bg-red-500/15 text-red-300"
+                : "bg-white/10 text-zinc-300"
+          }`}
+        >
+          {materialDelta > 0 ? `+${materialDelta}` : materialDelta}
+        </span>
+        <div
+          className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-[13px] font-semibold tabular-nums sm:gap-1.5 sm:px-2.5 sm:text-sm ${timerClass}`}
+        >
+          <Clock
+            className={`size-3.5 sm:size-4 ${timerVariant === "light" ? "text-zinc-700" : "opacity-90"}`}
+            aria-hidden
+          />
+          {formatClock(clockMs)}
+        </div>
       </div>
       {crown && (
         <span
           className={`absolute -right-2 -top-2 z-20 flex size-6 items-center justify-center rounded-full border ${
             crown === "win"
               ? "border-green-300 bg-[#8bcf5f] text-white"
-              : "border-red-300 bg-red-500 text-white"
+              : crown === "loss"
+                ? "border-red-300 bg-red-500 text-white"
+                : "border-yellow-300 bg-[#c9cf4f] text-zinc-900"
           }`}
-          aria-label={crown === "win" ? "Kazanan" : "Kaybeden"}
+          aria-label={
+            crown === "win" ? "Kazanan" : crown === "loss" ? "Kaybeden" : "Berabere"
+          }
         >
-          <Crown className="size-3.5" />
+          {crown === "win" ? (
+            <Crown className="size-3.5" />
+          ) : crown === "loss" ? (
+            <Flag className="size-3.5" />
+          ) : (
+            <Equal className="size-3.5" />
+          )}
         </span>
       )}
     </div>
@@ -202,24 +313,27 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   const knownMatchOnceRef = useRef(false);
   const eloAppliedRef = useRef(false);
   const historyIndexRef = useRef(0);
+  const historyRef = useRef<string[]>([STARTING_FEN]);
   const fenRef = useRef(STARTING_FEN);
   const lastServerUpdateRef = useRef<string | null>(null);
 
   const applyFenSnapshot = useCallback((nextFen: string) => {
-    setHistory((prev) => {
-      const base = prev.slice(0, historyIndexRef.current + 1);
-      if (base[base.length - 1] === nextFen) {
-        setHistoryIndex(base.length - 1);
-        historyIndexRef.current = base.length - 1;
-        return base;
-      }
-      const next = [...base, nextFen];
-      setHistoryIndex(next.length - 1);
-      historyIndexRef.current = next.length - 1;
-      return next;
-    });
-    setFen(nextFen);
-    fenRef.current = nextFen;
+    const prev = historyRef.current;
+    const atLiveEdge = historyIndexRef.current >= prev.length - 1;
+    const last = prev[prev.length - 1];
+    const next = last === nextFen ? prev : [...prev, nextFen];
+    if (next !== prev) {
+      historyRef.current = next;
+      setHistory(next);
+    }
+    if (atLiveEdge) {
+      const nextIndex = next.length - 1;
+      historyIndexRef.current = nextIndex;
+      setHistoryIndex(nextIndex);
+      const syncedFen = next[nextIndex] ?? nextFen;
+      setFen(syncedFen);
+      fenRef.current = syncedFen;
+    }
   }, []);
 
   const loadRow = useCallback(async () => {
@@ -264,7 +378,9 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   useEffect(() => {
     eloAppliedRef.current = false;
     setEloDelta(null);
-    setHistory([STARTING_FEN]);
+    const initialHistory = [STARTING_FEN];
+    historyRef.current = initialHistory;
+    setHistory(initialHistory);
     setHistoryIndex(0);
     historyIndexRef.current = 0;
   }, [matchId]);
@@ -407,6 +523,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
       if (nextElo !== myElo) {
         await setOwnProfileElo(nextElo);
       }
+      await refreshLeagues().catch(() => undefined);
       setEloDelta(nextElo - myElo);
       await refreshProfile();
     })().catch(() => {
@@ -469,17 +586,28 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   const topColor: "w" | "b" = boardOrientation === "white" ? "b" : "w";
   const bottomColor: "w" | "b" = boardOrientation === "white" ? "w" : "b";
-  const topCrown: "win" | "loss" | null =
-    match?.status === "finished" && winnerColor
-      ? winnerColor === topColor
-        ? "win"
-        : "loss"
+  const materialInfo = useMemo(() => getMaterialInfoFromFen(fen), [fen]);
+  const topCaptured = topColor === "w" ? materialInfo.capturedByWhite : materialInfo.capturedByBlack;
+  const bottomCaptured =
+    bottomColor === "w" ? materialInfo.capturedByWhite : materialInfo.capturedByBlack;
+  const topDelta = topColor === "w" ? materialInfo.whiteDelta : materialInfo.blackDelta;
+  const bottomDelta =
+    bottomColor === "w" ? materialInfo.whiteDelta : materialInfo.blackDelta;
+  const topCrown: "win" | "loss" | "draw" | null =
+    match?.status === "finished"
+      ? winnerColor
+        ? winnerColor === topColor
+          ? "win"
+          : "loss"
+        : "draw"
       : null;
-  const bottomCrown: "win" | "loss" | null =
-    match?.status === "finished" && winnerColor
-      ? winnerColor === bottomColor
-        ? "win"
-        : "loss"
+  const bottomCrown: "win" | "loss" | "draw" | null =
+    match?.status === "finished"
+      ? winnerColor
+        ? winnerColor === bottomColor
+          ? "win"
+          : "loss"
+        : "draw"
       : null;
 
   useEffect(() => {
@@ -698,6 +826,8 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           clockMs={boardOrientation === "white" ? blackClockMs : whiteClockMs}
           timerVariant="dark"
           crown={topCrown}
+          captured={topCaptured}
+          materialDelta={topDelta}
         />
         <div className="relative w-full overflow-hidden rounded-sm shadow-md">
           <Chessboard
@@ -707,8 +837,8 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
               boardOrientation,
               boardStyle: { width: "100%", maxWidth: "100%" },
               squareStyles,
-              lightSquareStyle: { backgroundColor: "#ebecd0" },
-              darkSquareStyle: { backgroundColor: "#739552" },
+              lightSquareStyle: { backgroundColor: "#d9dee2" },
+              darkSquareStyle: { backgroundColor: "#a4adb5" },
               showNotation: true,
               allowDragging: true,
               allowDrawingArrows: true,
@@ -728,6 +858,8 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           clockMs={boardOrientation === "white" ? whiteClockMs : blackClockMs}
           timerVariant="light"
           crown={bottomCrown}
+          captured={bottomCaptured}
+          materialDelta={bottomDelta}
         />
       </div>
 
@@ -768,7 +900,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           type="button"
           onClick={() => void resign()}
           disabled={modal.open || match.status !== "playing"}
-          className="rounded-md border border-[#5a7a45] bg-[#739552] px-4 py-2 text-sm font-semibold text-white transition enabled:hover:brightness-110 disabled:opacity-50"
+          className="rounded-md border border-[#5a7a45] bg-[#1f1f1f] px-4 py-2 text-sm font-semibold text-white transition enabled:hover:brightness-110 disabled:opacity-50"
         >
           Terk et
         </button>
@@ -800,10 +932,24 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
             )}
             <Link
               href="/play/online"
-              className="mt-6 flex w-full items-center justify-center rounded-md border border-[#5a7a45] bg-[#739552] py-2.5 text-sm font-semibold text-white"
+              className="mt-6 flex w-full items-center justify-center rounded-md border border-[#5a7a45] bg-[#1f1f1f] py-2.5 text-sm font-semibold text-white"
             >
               Tamam
             </Link>
+            <button
+              type="button"
+              onClick={() => {
+                const id = saveAnalysisSession({
+                  source: "online",
+                  title: "Çevrimiçi Maç",
+                  fens: history,
+                });
+                window.location.href = `/play/analysis?id=${encodeURIComponent(id)}`;
+              }}
+              className="mt-2 flex w-full items-center justify-center rounded-md border border-[#77a047] bg-[#77a047] py-2.5 text-sm font-semibold text-[#1a1f16]"
+            >
+              Maçı Analiz Et
+            </button>
           </div>
         </div>
       )}

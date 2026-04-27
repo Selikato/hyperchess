@@ -16,6 +16,7 @@ import { DEFAULT_ELO } from "@/lib/elo";
 type ProfileContextValue = {
   user: User | null;
   elo: number | null;
+  title: "GM" | "IM" | "FM" | "CM" | "ACEMI" | null;
   profileLoading: boolean;
   /** Profildeki Elo varsayılan başlangıç değerindeyse (placement). */
   placementMatch: boolean;
@@ -32,6 +33,7 @@ function isRefreshTokenError(message: string) {
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [elo, setElo] = useState<number | null>(null);
+  const [title, setTitle] = useState<"GM" | "IM" | "FM" | "CM" | "ACEMI" | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
 
   const refreshProfile = useCallback(async () => {
@@ -43,18 +45,29 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       setUser(u);
       if (!u) {
         setElo(null);
+        setTitle(null);
         setProfileLoading(false);
         return;
       }
       const { data, error } = await supabase
         .from("profiles")
-        .select("elo")
+        .select("elo,title")
         .eq("id", u.id)
         .maybeSingle();
       if (error) {
         setElo(DEFAULT_ELO);
+        setTitle(null);
       } else {
         setElo(typeof data?.elo === "number" ? data.elo : DEFAULT_ELO);
+        setTitle(
+          data?.title === "GM" ||
+            data?.title === "IM" ||
+            data?.title === "FM" ||
+            data?.title === "CM" ||
+            data?.title === "ACEMI"
+            ? data.title
+            : null
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -63,6 +76,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       }
       setUser(null);
       setElo(null);
+      setTitle(null);
     }
     setProfileLoading(false);
   }, []);
@@ -88,11 +102,12 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     () => ({
       user,
       elo,
+      title,
       profileLoading,
       placementMatch,
       refreshProfile,
     }),
-    [user, elo, profileLoading, placementMatch, refreshProfile]
+    [user, elo, title, profileLoading, placementMatch, refreshProfile]
   );
 
   return (

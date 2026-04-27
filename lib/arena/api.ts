@@ -4,6 +4,9 @@ import type {
   MatchRow,
   NotificationRow,
   ProfileSearchRow,
+  LeagueCode,
+  LeagueSettingRow,
+  LeagueTopPlayerRow,
   TournamentParticipantRow,
   TournamentRow,
 } from "@/lib/arena/types";
@@ -149,7 +152,14 @@ export async function fetchMatch(matchId: string): Promise<MatchRow | null> {
 
 export type ActiveMatchSummary = Pick<
   MatchRow,
-  "id" | "fen" | "status" | "white_player_id" | "black_player_id"
+  | "id"
+  | "fen"
+  | "status"
+  | "match_type"
+  | "white_player_id"
+  | "black_player_id"
+  | "winner_id"
+  | "updated_at"
 >;
 
 /** Lobide “devam eden maçlar” için: oyuncu olduğun playing veya waiting maçlar */
@@ -158,11 +168,11 @@ export async function listActiveMatchesForUser(
 ): Promise<ActiveMatchSummary[]> {
   const { data, error } = await supabase
     .from("matches")
-    .select("id,fen,status,white_player_id,black_player_id")
+    .select("id,fen,status,match_type,white_player_id,black_player_id,winner_id,updated_at")
     .or(`white_player_id.eq.${userId},black_player_id.eq.${userId}`)
-    .in("status", ["playing", "waiting"])
+    .in("status", ["playing", "waiting", "finished"])
     .order("updated_at", { ascending: false })
-    .limit(8);
+    .limit(16);
   if (error) throw error;
   return (data ?? []) as ActiveMatchSummary[];
 }
@@ -319,7 +329,7 @@ export async function listTournamentParticipants(
 ): Promise<TournamentParticipantRow[]> {
   const { data, error } = await supabase
     .from("tournament_participants")
-    .select("tournament_id,user_id,score,profiles!inner(display_name,full_name,elo)")
+    .select("tournament_id,user_id,score")
     .eq("tournament_id", tournamentId)
     .order("score", { ascending: false });
   if (error) throw error;
@@ -327,12 +337,36 @@ export async function listTournamentParticipants(
     tournament_id: string;
     user_id: string;
     score: number;
-    profiles:
-      | { display_name: string | null; full_name: string | null; elo: number | null }
-      | Array<{ display_name: string | null; full_name: string | null; elo: number | null }>;
   }>;
+
+  const userIds = [...new Set(rows.map((r) => r.user_id))];
+  const profilesById: Record<
+    string,
+    { display_name: string | null; full_name: string | null; elo: number | null }
+  > = {};
+
+  if (userIds.length > 0) {
+    const { data: profileRows, error: pErr } = await supabase
+      .from("profiles")
+      .select("id,display_name,full_name,elo")
+      .in("id", userIds);
+    if (pErr) throw pErr;
+    for (const p of (profileRows ?? []) as Array<{
+      id: string;
+      display_name: string | null;
+      full_name: string | null;
+      elo: number | null;
+    }>) {
+      profilesById[p.id] = {
+        display_name: p.display_name,
+        full_name: p.full_name,
+        elo: p.elo,
+      };
+    }
+  }
+
   return rows.map((r) => {
-    const profile = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
+    const profile = profilesById[r.user_id];
     return {
       tournament_id: r.tournament_id,
       user_id: r.user_id,
@@ -367,6 +401,13 @@ export async function maybeStartTournament(tournamentId: string): Promise<boolea
   return Boolean(data);
 }
 
+export async function refreshTournamentBracket(tournamentId: string): Promise<void> {
+  const { error } = await supabase.rpc("arena_refresh_tournament_bracket", {
+    p_tournament_id: tournamentId,
+  });
+  if (error) throw error;
+}
+
 export async function createTournament(
   title: string,
   description: string,
@@ -387,4 +428,29 @@ export async function deleteTournament(tournamentId: string): Promise<void> {
     p_tournament_id: tournamentId,
   });
   if (error) throw error;
+}
+
+export async function refreshLeagues(): Promise<void> {
+  const { error } = await supabase.rpc("arena_refresh_leagues");
+  if (error) throw error;
+}
+
+export async function listLeagueSettings(): Promise<LeagueSettingRow[]> {
+  const { data, error } = await supabase
+    .from("league_settings")
+    .select("*")
+    .order("min_elo", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as LeagueSettingRow[];
+}
+
+export async function listTopPlayersForLeague(league: LeagueCode): Promise<LeagueTopPlayerRow[]> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,display_name,full_name,elo,title")
+    .eq("title", league)
+    .order("elo", { ascending: false })
+    .limit(4);
+  if (error) throw error;
+  return (data ?? []) as LeagueTopPlayerRow[];
 }

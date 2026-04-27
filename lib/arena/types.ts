@@ -71,3 +71,19 @@ export type ProfileSearchRow = {
   display_name: string | null;
   full_name: string | null;
 };
+
+export type LeagueCode = "GM" | "IM" | "FM" | "CM" | "ACEMI";
+
+export type LeagueSettingRow = {
+  league: LeagueCode;
+  min_elo: number;
+  updated_at: string;
+};
+
+export type LeagueTopPlayerRow = {
+  id: string;
+  display_name: string | null;
+  full_name: string | null;
+  elo: number | null;
+  title: LeagueCode | null;
+};

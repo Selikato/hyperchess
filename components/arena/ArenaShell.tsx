@@ -81,7 +81,7 @@ export function ArenaShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, elo, profileLoading } = useProfile();
+  const { user, elo, title, profileLoading } = useProfile();
 
   const arenaActive = pathname?.startsWith("/play/online") ?? false;
   const botActive = pathname?.startsWith("/play/bot") ?? false;
@@ -93,6 +93,16 @@ export function ArenaShell({
     "Oyuncu";
 
   const initial = display.slice(0, 1).toUpperCase();
+  const titleColor =
+    title === "GM"
+      ? "border-yellow-300/60 bg-yellow-500/20 text-yellow-200"
+      : title === "IM"
+        ? "border-zinc-300/60 bg-zinc-200/20 text-zinc-100"
+        : title === "FM"
+          ? "border-amber-500/60 bg-amber-600/20 text-amber-200"
+          : title === "CM"
+            ? "border-[#77a047]/60 bg-[#77a047]/20 text-[#c9efac]"
+            : "border-slate-400/60 bg-slate-500/20 text-slate-200";
 
   return (
     <div className={`relative flex min-h-screen ${arena.bg} ${arena.text} font-sans antialiased`}>
@@ -131,8 +141,18 @@ export function ArenaShell({
             active={botActive}
           />
           <NavItem href="#" label="Bulmacalar" icon={Puzzle} active={false} disabled />
-          <NavItem href="#" label="Öğren" icon={BookOpen} active={false} disabled />
-          <NavItem href="#" label="Lig" icon={Trophy} active={false} disabled />
+          <NavItem
+            href="/play/learn"
+            label="Öğren"
+            icon={BookOpen}
+            active={pathname?.startsWith("/play/learn") ?? false}
+          />
+          <NavItem
+            href="/play/online/leagues"
+            label="Lig"
+            icon={Trophy}
+            active={pathname?.startsWith("/play/online/leagues") ?? false}
+          />
           <div className="px-3 pt-2 text-[11px] font-semibold uppercase tracking-wide text-[#77a047]">
             Turnuvalar
           </div>
@@ -159,6 +179,11 @@ export function ArenaShell({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-semibold text-white">{display}</p>
+                {title && (
+                  <p className={`mt-0.5 inline-flex w-fit rounded border px-1.5 py-0.5 text-[10px] font-bold ${titleColor}`}>
+                    {title}
+                  </p>
+                )}
                 <p className="truncate text-[11px] tabular-nums text-[#9b9893]">
                   {profileLoading ? "…" : `Elo ${elo ?? "—"}`}
                 </p>

@@ -1,4 +1,4 @@
-const STOCKFISH_JS = "/stockfish.js";
+const STOCKFISH_JS = "/stockfish/stockfish-18-lite-single.js";
 
 function workerUrl(): string {
   if (typeof window !== "undefined") {
@@ -38,6 +38,8 @@ type LineWaiter = {
   resolve: (s: string) => void;
   reject: (e: Error) => void;
 };
+
+type ScoreInfo = { cp: number | null; mate: number | null };
 
 export class StockfishBrowserEngine {
   private worker: Worker | null = null;
@@ -100,7 +102,11 @@ export class StockfishBrowserEngine {
     await new Promise((r) => globalThis.setTimeout(r, 150));
   }
 
-  async initUci(): Promise<void> {
+  async initUci(options?: {
+    skillLevel?: number;
+    limitStrength?: boolean;
+    uciElo?: number;
+  }): Promise<void> {
     if (!this.worker) throw new Error("Worker yok.");
 
     const lineTimeoutMs = 60_000;
@@ -115,8 +121,14 @@ export class StockfishBrowserEngine {
       if (line === "uciok") break;
     }
 
-    this.send("setoption name UCI_LimitStrength value true");
-    this.send("setoption name UCI_Elo value 600");
+    const skillLevel = options?.skillLevel ?? 20;
+    const limitStrength = options?.limitStrength ?? false;
+    const uciElo = options?.uciElo ?? 3000;
+    this.send(`setoption name Skill Level value ${skillLevel}`);
+    this.send(`setoption name UCI_LimitStrength value ${limitStrength ? "true" : "false"}`);
+    if (limitStrength) {
+      this.send(`setoption name UCI_Elo value ${uciElo}`);
+    }
     this.send("isready");
     for (;;) {
       const line = await withTimeout(
@@ -136,22 +148,22 @@ export class StockfishBrowserEngine {
   async goBestMoveWithEval(
     fen: string,
     depth: number
-  ): Promise<{ bestmove: string; evalCp: number | null }> {
+  ): Promise<{ bestmove: string; evalCp: number | null; evalMate?: number | null }> {
     if (this.disposed) throw new Error("Motor kapatıldı.");
     this.send("ucinewgame");
     this.send(`position fen ${fen}`);
     this.send(`go depth ${depth}`);
 
-    let lastEval: number | null = null;
+    let last: ScoreInfo = { cp: null, mate: null };
     for (;;) {
       const line = await withTimeout(
         this.readLine(),
         60_000,
         "Motor hamle araması zaman aşımı."
       );
-      const score = parseScoreCp(line);
-      if (score !== null) {
-        lastEval = score;
+      const score = parseScore(line);
+      if (score.cp !== null || score.mate !== null) {
+        last = score;
       }
       if (line.startsWith("bestmove")) {
         const m = /^bestmove (\S+)/.exec(line);
@@ -159,7 +171,46 @@ export class StockfishBrowserEngine {
         if (!move || move === "(none)") {
           throw new Error("Motor geçerli hamle üretemedi.");
         }
-        return { bestmove: move, evalCp: lastEval };
+        return { bestmove: move, evalCp: last.cp, evalMate: last.mate };
+      }
+    }
+  }
+
+  async goTopMovesWithEval(
+    fen: string,
+    depth: number,
+    multiPv = 3
+  ): Promise<Array<{ uci: string; evalCp: number | null }>> {
+    if (this.disposed) throw new Error("Motor kapatıldı.");
+    this.send(`setoption name MultiPV value ${Math.max(1, multiPv)}`);
+    this.send("ucinewgame");
+    this.send(`position fen ${fen}`);
+    this.send(`go depth ${depth}`);
+
+    const byPv = new Map<number, { uci: string; evalCp: number | null }>();
+    for (;;) {
+      const line = await withTimeout(
+        this.readLine(),
+        60_000,
+        "Motor çoklu analiz zaman aşımı."
+      );
+      const pvMatch = /\bmultipv (\d+)\b/.exec(line);
+      const score = parseScore(line);
+      const pvMove = /\bpv\s+([a-h][1-8][a-h][1-8][qrbn]?)/.exec(line);
+      if (pvMatch && pvMove) {
+        const idx = Number(pvMatch[1]);
+        const prev = byPv.get(idx);
+        byPv.set(idx, {
+          uci: pvMove[1],
+          evalCp: score.cp ?? prev?.evalCp ?? null,
+        });
+      }
+      if (line.startsWith("bestmove")) {
+        this.send("setoption name MultiPV value 1");
+        const rows = [...byPv.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map((x) => x[1]);
+        return rows;
       }
     }
   }
@@ -168,19 +219,43 @@ export class StockfishBrowserEngine {
     if (this.disposed) throw new Error("Motor kapatıldı.");
     this.send(`position fen ${fen}`);
     this.send(`go depth ${depth}`);
-    let lastEval: number | null = null;
+    let last: ScoreInfo = { cp: null, mate: null };
     for (;;) {
       const line = await withTimeout(
         this.readLine(),
         60_000,
         "Motor analiz zaman aşımı."
       );
-      const score = parseScoreCp(line);
-      if (score !== null) {
-        lastEval = score;
+      const score = parseScore(line);
+      if (score.cp !== null || score.mate !== null) {
+        last = score;
       }
       if (line.startsWith("bestmove")) {
-        return lastEval;
+        return last.cp ?? (last.mate == null ? null : (last.mate > 0 ? 10_000 : -10_000));
+      }
+    }
+  }
+
+  async evaluateFenDetailed(
+    fen: string,
+    depth: number
+  ): Promise<{ evalCp: number | null; evalMate: number | null }> {
+    if (this.disposed) throw new Error("Motor kapatıldı.");
+    this.send(`position fen ${fen}`);
+    this.send(`go depth ${depth}`);
+    let last: ScoreInfo = { cp: null, mate: null };
+    for (;;) {
+      const line = await withTimeout(
+        this.readLine(),
+        60_000,
+        "Motor analiz zaman aşımı."
+      );
+      const score = parseScore(line);
+      if (score.cp !== null || score.mate !== null) {
+        last = score;
+      }
+      if (line.startsWith("bestmove")) {
+        return { evalCp: last.cp, evalMate: last.mate };
       }
     }
   }
@@ -202,14 +277,14 @@ export class StockfishBrowserEngine {
   }
 }
 
-function parseScoreCp(line: string): number | null {
+function parseScore(line: string): ScoreInfo {
   const cp = /\bscore cp (-?\d+)/.exec(line);
-  if (cp) return Number(cp[1]);
+  if (cp) return { cp: Number(cp[1]), mate: null };
   const mate = /\bscore mate (-?\d+)/.exec(line);
-  if (!mate) return null;
+  if (!mate) return { cp: null, mate: null };
   const m = Number(mate[1]);
-  if (!Number.isFinite(m) || m === 0) return null;
-  return m > 0 ? 10_000 : -10_000;
+  if (!Number.isFinite(m) || m === 0) return { cp: null, mate: null };
+  return { cp: m > 0 ? 10_000 : -10_000, mate: m };
 }
 
 export function parseUciBestmove(uci: string): {

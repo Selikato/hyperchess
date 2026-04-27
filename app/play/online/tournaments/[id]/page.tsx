@@ -11,6 +11,7 @@ import {
   joinTournament,
   listTournamentParticipants,
   maybeStartTournament,
+  refreshTournamentBracket,
 } from "@/lib/arena/api";
 import { supabase } from "@/lib/supabaseClient";
 import type { TournamentParticipantRow, TournamentRow } from "@/lib/arena/types";
@@ -28,6 +29,7 @@ export default function TournamentDetailPage() {
   const loadAll = useMemo(
     () => async () => {
       try {
+        await refreshTournamentBracket(tournamentId).catch(() => undefined);
         await maybeStartTournament(tournamentId).catch(() => false);
         const [t, p] = await Promise.all([
           fetchTournament(tournamentId),

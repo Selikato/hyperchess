@@ -38,10 +38,11 @@ export function computeEloAfterOnlineMatch(
   opponent: number,
   outcome: OnlineMatchOutcome
 ): number {
-  const k = 24;
   const score = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
   const expected = 1 / (1 + 10 ** ((opponent - current) / 400));
-  return Math.max(100, Math.round(current + k * (score - expected)));
+  const k = 32;
+  const delta = Math.round(k * (score - expected));
+  return Math.max(100, Math.round(current + delta));
 }
 
 /** Ekranda sayıyı yumuşak geçişle güncelle */

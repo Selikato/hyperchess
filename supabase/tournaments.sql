@@ -99,6 +99,105 @@ begin
   insert into public.tournament_participants (tournament_id, user_id, score)
   values (p_tournament_id, uid, 0)
   on conflict (tournament_id, user_id) do nothing;
+
+  perform public.arena_refresh_tournament_bracket(p_tournament_id);
+end;
+$$;
+
+grant execute on function public.arena_join_tournament(uuid) to authenticated;
+
+create or replace function public.arena_refresh_tournament_bracket(p_tournament_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  users uuid[];
+  shuffled uuid[];
+  n int;
+  bracket_size int := 1;
+  round1_count int;
+  i int := 1;
+  left_uid uuid;
+  right_uid uuid;
+  round1 jsonb := '[]'::jsonb;
+  t_status text;
+begin
+  select status into t_status
+  from public.tournaments
+  where id = p_tournament_id;
+
+  if t_status is null then
+    raise exception 'tournament not found';
+  end if;
+  if t_status <> 'bekliyor' then
+    return;
+  end if;
+
+  select array_agg(tp.user_id)
+  into users
+  from public.tournament_participants tp
+  where tp.tournament_id = p_tournament_id;
+
+  if users is null or array_length(users, 1) is null then
+    update public.tournaments
+    set bracket_json = null
+    where id = p_tournament_id;
+    return;
+  end if;
+
+  select array_agg(x.user_id)
+  into shuffled
+  from unnest(users) as x(user_id)
+  order by random();
+
+  n := array_length(shuffled, 1);
+  while bracket_size < n loop
+    bracket_size := bracket_size * 2;
+  end loop;
+
+  round1_count := bracket_size / 2;
+  while i <= round1_count loop
+    left_uid := shuffled[i];
+    right_uid := shuffled[bracket_size - i + 1];
+    round1 := round1 || jsonb_build_object(
+      'slot', i,
+      'left', coalesce(left_uid::text, null),
+      'right', coalesce(right_uid::text, null)
+    );
+    i := i + 1;
+  end loop;
+
+  update public.tournaments
+  set bracket_json = jsonb_build_object(
+    'size', bracket_size,
+    'round1', round1
+  )
+  where id = p_tournament_id;
+end;
+$$;
+
+grant execute on function public.arena_refresh_tournament_bracket(uuid) to authenticated;
+
+create or replace function public.arena_join_tournament(p_tournament_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  insert into public.tournament_participants (tournament_id, user_id, score)
+  values (p_tournament_id, uid, 0)
+  on conflict (tournament_id, user_id) do nothing;
+
+  perform public.arena_refresh_tournament_bracket(p_tournament_id);
 end;
 $$;
 
@@ -140,6 +239,8 @@ begin
   insert into public.tournament_participants (tournament_id, user_id, score)
   values (t_id, uid, 0)
   on conflict (tournament_id, user_id) do nothing;
+
+  perform public.arena_refresh_tournament_bracket(t_id);
 
   select coalesce(nullif(trim(display_name), ''), nullif(trim(full_name), ''), 'Bir oyuncu')
   into creator_name
