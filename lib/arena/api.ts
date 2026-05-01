@@ -449,8 +449,7 @@ export async function listTopPlayersForLeague(league: LeagueCode): Promise<Leagu
     .from("profiles")
     .select("id,display_name,full_name,elo,title")
     .eq("title", league)
-    .order("elo", { ascending: false })
-    .limit(4);
+    .order("elo", { ascending: false });
   if (error) throw error;
   return (data ?? []) as LeagueTopPlayerRow[];
 }

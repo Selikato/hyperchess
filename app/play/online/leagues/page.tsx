@@ -66,7 +66,7 @@ export default function LeaguesPage() {
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
         <h1 className="text-2xl font-bold text-white">Lig Skorbordu</h1>
         <p className="mt-1 text-sm text-[#9b9893]">
-          Dinamik lig barajları ve her ligdeki en iyi 4 oyuncu.
+          Dinamik lig barajları ve her ligdeki tüm oyuncular.
         </p>
         {err && <p className="mt-3 text-sm text-red-300">{err}</p>}
         <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -79,11 +79,16 @@ export default function LeaguesPage() {
                 <span className={`rounded border px-2 py-1 text-xs font-bold ${leagueColors[league]}`}>
                   {league}
                 </span>
-                <span className="text-xs font-semibold text-[#9b9893]">
-                  Baraj: {minByLeague(league)}
-                </span>
+                <div className="text-right">
+                  <span className="block text-xs font-semibold text-[#9b9893]">
+                    Baraj: {minByLeague(league)}
+                  </span>
+                  <span className="block text-[11px] text-[#77746f]">
+                    Oyuncu: {tops[league].length}
+                  </span>
+                </div>
               </div>
-              <ol className="space-y-2">
+              <ol className="max-h-[330px] space-y-2 overflow-y-auto pr-1">
                 {tops[league].length === 0 ? (
                   <li className="text-sm text-[#9b9893]">Oyuncu yok.</li>
                 ) : (

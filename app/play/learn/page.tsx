@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
-import type { PieceDropHandlerArgs } from "react-chessboard";
+import type { PieceDropHandlerArgs, PieceHandlerArgs, SquareHandlerArgs } from "react-chessboard";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 
@@ -119,13 +119,53 @@ function applyUciMove(game: Chess, uci: string) {
   }
 }
 
+const SELECTED_STYLE = {
+  boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
+  backgroundColor: "rgba(129, 182, 76, 0.12)",
+};
+
+const DOT_STYLE = {
+  backgroundImage:
+    "radial-gradient(circle, rgba(0,0,0,0.38) 0%, rgba(0,0,0,0.38) 20%, transparent 28%)",
+};
+
+function legalToDots(game: Chess, from: string) {
+  const out: Record<string, React.CSSProperties> = {};
+  try {
+    const moves = game.moves({ square: from as never, verbose: true });
+    for (const m of moves) {
+      if (m.to) out[m.to] = DOT_STYLE;
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
+function legalDestinations(game: Chess, from: string) {
+  const s = new Set<string>();
+  try {
+    const moves = game.moves({ square: from as never, verbose: true });
+    for (const m of moves) {
+      if (m.to) s.add(m.to);
+    }
+  } catch {
+    return s;
+  }
+  return s;
+}
+
 export default function LearnPage() {
   const [selectedId, setSelectedId] = useState(LESSONS[0].id);
+  const [mobileSelectedId, setMobileSelectedId] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
   const [kindFilter, setKindFilter] = useState<"all" | "opening" | "gambit">("all");
   const [watching, setWatching] = useState(false);
   const [watchIndex, setWatchIndex] = useState(0);
   const [watchDone, setWatchDone] = useState(false);
   const [practiceMode, setPracticeMode] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [dots, setDots] = useState<Record<string, React.CSSProperties>>({});
   const gameRef = useRef(new Chess());
   const opponentMoveTimeoutRef = useRef<number | null>(null);
   const [fen, setFen] = useState(gameRef.current.fen());
@@ -134,7 +174,8 @@ export default function LearnPage() {
     () => LESSONS.filter((l) => (kindFilter === "all" ? true : l.kind === kindFilter)),
     [kindFilter],
   );
-  const active = filtered.find((l) => l.id === selectedId) ?? filtered[0] ?? LESSONS[0];
+  const activeId = isMobile ? mobileSelectedId : selectedId;
+  const active = filtered.find((l) => l.id === activeId) ?? filtered[0] ?? LESSONS[0];
   const boardOrientation = active.side === "black" ? "black" : "white";
   const userColor = active.side === "black" ? "b" : "w";
   const firstUserMoveIndex = userColor === "w" ? 0 : 1;
@@ -160,6 +201,8 @@ export default function LearnPage() {
       const ok = applyUciMove(gameRef.current, active.watchMoves[index]);
       opponentMoveTimeoutRef.current = null;
       if (!ok) {
+        setSelected(null);
+        setDots({});
         setPracticeMode(false);
         return;
       }
@@ -179,12 +222,23 @@ export default function LearnPage() {
   };
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 1023px)");
+    const apply = () => setIsMobile(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
     gameRef.current = new Chess();
     setFen(gameRef.current.fen());
     setWatching(false);
     setWatchDone(false);
     setWatchIndex(firstUserMoveIndex);
     setPracticeMode(false);
+    setSelected(null);
+    setDots({});
     clearOpponentTimeout();
   }, [active.id, firstUserMoveIndex]);
 
@@ -237,6 +291,8 @@ export default function LearnPage() {
         promotion: "q",
       });
       if (!moved) return false;
+      setSelected(null);
+      setDots({});
       setFen(gameRef.current.fen());
       if (practiceMode) {
         const next = watchIndex + 1;
@@ -253,51 +309,211 @@ export default function LearnPage() {
     }
   };
 
+  const squareStyles = useMemo(() => {
+    const base = { ...dots };
+    if (selected) base[selected] = { ...(base[selected] ?? {}), ...SELECTED_STYLE };
+    return base;
+  }, [dots, selected]);
+
+  const onSquareClick = ({ square, piece }: SquareHandlerArgs) => {
+    if (watching) return;
+    if (practiceMode && gameRef.current.turn() !== userColor) return;
+
+    if (selected) {
+      const legal = legalDestinations(gameRef.current, selected);
+      if (legal.has(square)) {
+        onDrop({ sourceSquare: selected, targetSquare: square, piece: piece ?? { pieceType: "" } } as PieceDropHandlerArgs);
+        return;
+      }
+    }
+
+    if (!piece) {
+      setSelected(null);
+      setDots({});
+      return;
+    }
+    if (practiceMode && piece.pieceType[0] !== userColor) return;
+    if (selected === square) {
+      setSelected(null);
+      setDots({});
+      return;
+    }
+    setSelected(square);
+    setDots(legalToDots(gameRef.current, square));
+  };
+
+  const onPieceClick = ({ square, piece, isSparePiece }: PieceHandlerArgs) => {
+    if (!square || isSparePiece || !piece) return;
+    onSquareClick({ square, piece } as SquareHandlerArgs);
+  };
+
+  const startWatch = () => {
+    clearOpponentTimeout();
+    gameRef.current = new Chess();
+    setFen(gameRef.current.fen());
+    setWatchDone(false);
+    setWatchIndex(0);
+    setPracticeMode(false);
+    setWatching(true);
+  };
+
+  const stopWatch = () => {
+    clearOpponentTimeout();
+    setWatching(false);
+  };
+
+  const resetLesson = () => {
+    clearOpponentTimeout();
+    setWatching(false);
+    setWatchDone(false);
+    setWatchIndex(firstUserMoveIndex);
+    setPracticeMode(false);
+    gameRef.current = new Chess();
+    if (userColor === "b") {
+      applyUciMove(gameRef.current, active.watchMoves[0]);
+      setWatchIndex(1);
+    }
+    setFen(gameRef.current.fen());
+  };
+
   return (
     <ArenaShell>
-      <div className="mx-auto grid max-w-6xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
-        <aside className="rounded-xl border border-[#3c3b36] bg-[#201f1b] p-3">
-          <h1 className="text-lg font-bold text-white">Öğren: Açılışlar ve Gambitler</h1>
-          <p className="mt-1 text-xs text-[#9b9893]">Hamlelerin ne işe yaradığını adım adım öğren.</p>
-          <div className="mt-3 flex gap-2">
-            {[{ id: "all", label: "Hepsi" }, { id: "opening", label: "Açılış" }, { id: "gambit", label: "Gambit" }].map((f) => (
-              <button key={f.id} type="button" onClick={() => setKindFilter(f.id as "all" | "opening" | "gambit")} className={`rounded-md border px-2 py-1 text-xs font-semibold ${kindFilter === f.id ? "border-[#81b64c] bg-[#81b64c]/20 text-[#c9efac]" : "border-[#3c3b36] bg-[#2a2926] text-[#9b9893]"}`}>
-                {f.label}
-              </button>
-            ))}
+      {isMobile && !mobileSelectedId ? (
+        <div className="min-h-[calc(100dvh-5.5rem)] px-4 py-4">
+          <div className="rounded-xl border border-[#3c3b36] bg-[#201f1b] p-3">
+            <h1 className="text-xl font-bold text-white">Öğren: Açılışlar ve Gambitler</h1>
+            <p className="mt-1 text-xs text-[#9b9893]">
+              Bir açılış seç, sonra izleme ve deneme tahtasına geç.
+            </p>
+            <div className="mt-3 flex gap-2">
+              {[{ id: "all", label: "Hepsi" }, { id: "opening", label: "Açılış" }, { id: "gambit", label: "Gambit" }].map((f) => (
+                <button key={f.id} type="button" onClick={() => setKindFilter(f.id as "all" | "opening" | "gambit")} className={`rounded-md border px-2 py-1 text-xs font-semibold ${kindFilter === f.id ? "border-[#81b64c] bg-[#81b64c]/20 text-[#c9efac]" : "border-[#3c3b36] bg-[#2a2926] text-[#9b9893]"}`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 space-y-2">
+              {filtered.map((lesson) => (
+                <button
+                  key={lesson.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedId(lesson.id);
+                    setMobileSelectedId(lesson.id);
+                  }}
+                  className="w-full rounded-lg border border-[#3c3b36] bg-[#2a2926] p-3 text-left active:bg-[#32312d]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-base font-semibold text-white">{lesson.name}</span>
+                    <span className="rounded bg-black/25 px-1.5 py-0.5 text-[10px] uppercase text-[#d8d6d2]">{lesson.level}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#9b9893]">{lesson.summary}</p>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="mt-3 max-h-[65vh] space-y-2 overflow-y-auto pr-1">
-            {filtered.map((lesson) => (
-              <button key={lesson.id} type="button" onClick={() => setSelectedId(lesson.id)} className={`w-full rounded-lg border p-2 text-left ${active.id === lesson.id ? "border-[#81b64c] bg-[#2e3a24]" : "border-[#3c3b36] bg-[#2a2926] hover:bg-[#32312d]"}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-semibold text-white">{lesson.name}</span>
-                  <span className="rounded bg-black/25 px-1.5 py-0.5 text-[10px] uppercase text-[#d8d6d2]">{lesson.level}</span>
-                </div>
-                <p className="mt-1 text-xs text-[#9b9893]">{lesson.summary}</p>
+        </div>
+      ) : (
+      <div className="mx-auto w-full max-w-[1250px] px-0 py-3 sm:px-4 lg:px-6">
+        <section className={`rounded-xl border border-[#3c3b36] bg-[#1b1a17] p-3 ${isMobile ? "px-0 pb-4 pt-3" : "p-4"}`}>
+          {isMobile && (
+            <div className="mb-2 px-4">
+              <button
+                type="button"
+                onClick={() => setMobileSelectedId(null)}
+                className="rounded-md border border-[#3c3b36] bg-[#2a2926] px-3 py-1.5 text-xs font-semibold text-[#e8e6e3]"
+              >
+                Açılış listesine dön
               </button>
-            ))}
+            </div>
+          )}
+          <div className="mb-3 hidden items-center justify-between gap-2 px-1 lg:flex">
+            <div className="flex gap-2">
+              {[{ id: "all", label: "Hepsi" }, { id: "opening", label: "Açılış" }, { id: "gambit", label: "Gambit" }].map((f) => (
+                <button key={f.id} type="button" onClick={() => setKindFilter(f.id as "all" | "opening" | "gambit")} className={`rounded-md border px-2 py-1 text-xs font-semibold ${kindFilter === f.id ? "border-[#81b64c] bg-[#81b64c]/20 text-[#c9efac]" : "border-[#3c3b36] bg-[#2a2926] text-[#9b9893]"}`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <select
+              value={active.id}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="rounded-md border border-[#3c3b36] bg-[#2a2926] px-2 py-1 text-xs text-[#e8e6e3]"
+            >
+              {filtered.map((lesson) => (
+                <option key={lesson.id} value={lesson.id}>
+                  {lesson.name}
+                </option>
+              ))}
+            </select>
           </div>
-        </aside>
-        <section className="rounded-xl border border-[#3c3b36] bg-[#201f1b] p-4">
-          <h2 className="text-2xl font-bold text-white">{active.name}</h2>
-          <p className="mt-3 rounded-lg border border-[#3c3b36] bg-[#2a2926] p-3 text-sm text-[#e8e6e3]">{active.plan}</p>
-          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-            <div className="overflow-hidden rounded-md border border-[#3c3b36]"><Chessboard options={{ id: "learn-board", position: fen, boardOrientation, boardStyle: { width: "100%", maxWidth: "100%" }, lightSquareStyle: { backgroundColor: "#d9dee2" }, darkSquareStyle: { backgroundColor: "#a4adb5" }, showNotation: true, allowDragging: !watching, pieces: MAESTRO_PIECES, onPieceDrop: onDrop }} /></div>
-            <div className="rounded-lg border border-[#3c3b36] bg-[#2a2926] p-3">
-              <p className="text-xs text-[#c7c4be]"><strong className="text-white">İzle:</strong> Hamleler 3 saniye aralıkla otomatik oynatılır.</p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button type="button" onClick={() => { clearOpponentTimeout(); gameRef.current = new Chess(); setFen(gameRef.current.fen()); setWatchDone(false); setWatchIndex(0); setPracticeMode(false); setWatching(true); }} className="rounded-md border border-[#81b64c] bg-[#81b64c]/20 px-3 py-1.5 text-xs font-semibold text-[#c9efac]">İzle</button>
-                <button type="button" onClick={() => { clearOpponentTimeout(); setWatching(false); }} className="rounded-md border border-[#3c3b36] bg-[#201f1b] px-3 py-1.5 text-xs font-semibold text-[#e8e6e3]">Durdur</button>
-                <button type="button" onClick={() => { clearOpponentTimeout(); setWatching(false); setWatchDone(false); setWatchIndex(firstUserMoveIndex); setPracticeMode(false); gameRef.current = new Chess(); if (userColor === "b") { applyUciMove(gameRef.current, active.watchMoves[0]); setWatchIndex(1); } setFen(gameRef.current.fen()); }} className="rounded-md border border-[#3c3b36] bg-[#201f1b] px-3 py-1.5 text-xs font-semibold text-[#e8e6e3]">Sıfırla</button>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <div
+              className={`${isMobile ? "learn-mobile-board mx-auto w-full max-w-full overflow-hidden rounded-md border border-[#3c3b36] box-border" : "overflow-hidden rounded-md border border-[#3c3b36]"}`}
+              style={
+                isMobile
+                  ? {
+                      width: "min(calc(100vw - 12px), calc(100dvh - 240px))",
+                      maxWidth: "calc(100vw - 12px)",
+                    }
+                  : {
+                      width: "min(100%, calc(100dvh - 140px))",
+                      maxWidth: "100%",
+                    }
+              }
+            >
+              <div>
+                <Chessboard options={{ id: "learn-board", position: fen, boardOrientation, boardStyle: { width: "100%", maxWidth: "100%" }, squareStyles, lightSquareStyle: { backgroundColor: "#d9dee2" }, darkSquareStyle: { backgroundColor: "#a4adb5" }, showNotation: true, allowDragging: !watching, pieces: MAESTRO_PIECES, onSquareClick, onPieceClick, onPieceDrop: onDrop }} />
+              </div>
+            </div>
+            <aside className={`rounded-lg border border-[#2f2e2a] bg-gradient-to-b from-[#22211d] to-[#1a1916] p-3 ${isMobile ? "mx-4" : ""}`}>
+              <h2 className="text-lg font-bold text-white">Learn The {active.name}</h2>
+              <div className="mt-3 rounded-md border border-white/10 bg-[#f2f2f1] px-3 py-2 text-sm text-[#1a1a1a]">
+                {active.plan}
+              </div>
+              <button
+                type="button"
+                onClick={startWatch}
+                className="mt-3 w-full rounded-md border border-[#6f9f43] bg-[#81b64c] px-3 py-2 text-sm font-bold text-[#1a2312] hover:brightness-105"
+              >
+                Başla
+              </button>
+              <button
+                type="button"
+                className="mt-2 w-full rounded-md border border-[#3c3b36] bg-[#22211d] px-3 py-2 text-sm font-semibold text-[#c7c4be]"
+              >
+                Açıklayıcı Video
+              </button>
+              <div className="mt-3 flex gap-2">
+                <button type="button" onClick={stopWatch} className="flex-1 rounded-md border border-[#3c3b36] bg-[#201f1b] px-3 py-1.5 text-xs font-semibold text-[#e8e6e3]">Durdur</button>
+                <button type="button" onClick={resetLesson} className="flex-1 rounded-md border border-[#3c3b36] bg-[#201f1b] px-3 py-1.5 text-xs font-semibold text-[#e8e6e3]">Sıfırla</button>
               </div>
               <p className="mt-2 text-xs text-[#9b9893]">İzlenen hamle: {watchIndex}/{active.watchMoves.length}</p>
               {watchDone && <p className="mt-2 rounded border border-[#81b64c]/50 bg-[#81b64c]/10 px-2 py-1 text-xs text-[#c9efac]">İzleme tamamlandı. Şimdi aynı hamleleri tahtada sen uygula.</p>}
-            </div>
+              <h3 className="mt-3 text-xs font-bold uppercase tracking-wide text-[#77a047]">Hamleler ve amacı</h3>
+              <ol className="mt-2 max-h-[220px] space-y-1.5 overflow-y-auto pr-1">
+                {active.moves.map((item, idx) => (
+                  <li key={`${active.id}-${idx}`} className="rounded-md border border-[#3c3b36] bg-[#2a2926] px-2 py-1.5">
+                    <p className="text-xs font-semibold text-white">{item.move}</p>
+                    <p className="mt-0.5 text-[11px] text-[#c7c4be]">{item.purpose}</p>
+                  </li>
+                ))}
+              </ol>
+            </aside>
           </div>
-          <h3 className="mt-4 text-sm font-bold uppercase tracking-wide text-[#77a047]">Hamleler ve amacı</h3>
-          <ol className="mt-2 space-y-2">{active.moves.map((item, idx) => <li key={`${active.id}-${idx}`} className="rounded-md border border-[#3c3b36] bg-[#2a2926] px-3 py-2"><p className="text-sm font-semibold text-white">{item.move}</p><p className="mt-1 text-xs text-[#c7c4be]">{item.purpose}</p></li>)}</ol>
         </section>
       </div>
+      )}
+      <style jsx global>{`
+        .learn-mobile-board .react-chessboard text,
+        .learn-mobile-board .react-chessboard .coordinate,
+        .learn-mobile-board .react-chessboard [class*="notation"],
+        .learn-mobile-board .react-chessboard [class*="coordinate"] {
+          font-size: 4.5px !important;
+          font-weight: 600 !important;
+          opacity: 0.8 !important;
+        }
+      `}</style>
     </ArenaShell>
   );
 }

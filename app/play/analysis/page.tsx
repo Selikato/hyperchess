@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { Chess } from "chess.js";
 import type { Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
-import { Info } from "lucide-react";
+import { BookOpen, CircleHelp, Info, Star, ThumbsUp, X } from "lucide-react";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 import {
@@ -77,8 +77,8 @@ const TAG_SYMBOL: Record<MoveTag, string> = {
 };
 
 const TAG_BADGE_CLASS: Record<MoveTag, string> = {
-  brilliant: "bg-cyan-500 text-white",
-  great: "bg-sky-500 text-white",
+  brilliant: "bg-[#29d3df] text-white",
+  great: "bg-[#7fa8d1] text-white",
   best: "bg-lime-500 text-white",
   excellent: "bg-lime-400 text-[#1b2a12]",
   good: "bg-green-300 text-[#1a2418]",
@@ -89,6 +89,31 @@ const TAG_BADGE_CLASS: Record<MoveTag, string> = {
   blunder: "bg-red-500 text-white",
   missed_win: "bg-rose-500 text-white",
 };
+
+const TAG_BADGE_RING: Record<MoveTag, string> = {
+  brilliant: "border-[#b8f0f4]",
+  great: "border-[#bfd3e8]",
+  best: "border-[#d2f7ab]",
+  excellent: "border-[#d4f0a8]",
+  good: "border-[#d0e9c8]",
+  book: "border-[#e3c9a8]",
+  interesting: "border-[#f1da8a]",
+  dubious: "border-[#f1da8a]",
+  mistake: "border-[#ffd29a]",
+  blunder: "border-[#ffc2c2]",
+  missed_win: "border-[#ffd0d0]",
+};
+
+function TagBadgeIcon({ tag }: { tag: MoveTag }) {
+  if (tag === "excellent") return <ThumbsUp className="size-4" />;
+  if (tag === "best") return <Star className="size-4" />;
+  if (tag === "book") return <BookOpen className="size-4" />;
+  if (tag === "dubious" || tag === "interesting") return <CircleHelp className="size-4" />;
+  if (tag === "missed_win") return <X className="size-4" />;
+  if (tag === "great") return <span className="text-[13px] font-black leading-none">!</span>;
+  if (tag === "brilliant") return <span className="text-[12px] font-black leading-none">!!</span>;
+  return <span className="text-[13px] font-black leading-none">{TAG_SYMBOL[tag]}</span>;
+}
 
 function materialNoKing(fen: string, color: "w" | "b") {
   const board = fen.split(" ")[0] ?? "";
@@ -117,6 +142,7 @@ function classifyMove(args: {
   ply: number;
   loss: number;
   isMateMove: boolean;
+  san: string;
   bestEvalForMover: number | null;
   playedEvalForMover: number | null;
   bestUci: string | null;
@@ -130,6 +156,7 @@ function classifyMove(args: {
     ply,
     loss,
     isMateMove,
+    san,
     bestEvalForMover,
     playedEvalForMover,
     bestUci,
@@ -154,9 +181,11 @@ function classifyMove(args: {
   }
   if (winDrop > 0.1) return "blunder";
   if (loss >= 200) return "blunder";
-  if (ply <= 10 && loss <= 30) return "book";
+  const openingLikeSan = !/[x+#=]/.test(san);
+  const playedInTop3 = playedUci != null && top3Uci.includes(playedUci);
+  if (ply <= 10 && loss <= 25 && openingLikeSan && playedInTop3) return "book";
   const sameAsBest = bestUci != null && playedUci != null && bestUci === playedUci;
-  const inTop3 = playedUci != null && top3Uci.includes(playedUci);
+  const inTop3 = playedInTop3;
   const matBefore = materialNoKing(fenBefore, turn);
   const matAfter = materialNoKing(fenAfter, turn);
   const sacrifice = matBefore - matAfter >= 2;
@@ -254,8 +283,8 @@ function squareToPercent(square: string) {
   const rank = Number(square[1]);
   if (!Number.isFinite(file) || !Number.isFinite(rank)) return null;
   return {
-    left: `${(file + 0.5) * 12.5}%`,
-    top: `${(8 - rank + 0.5) * 12.5}%`,
+    left: `${(file + 1) * 12.5}%`,
+    top: `${(8 - rank) * 12.5}%`,
   };
 }
 
@@ -523,6 +552,7 @@ export default function AnalysisPage() {
             ply: i + 1,
             loss,
             isMateMove: played.san.includes("#"),
+            san: played.san,
             bestEvalForMover: bestPerspective,
             playedEvalForMover: playedPerspective,
             bestUci: deepBest?.bestmove ?? null,
@@ -675,13 +705,13 @@ export default function AnalysisPage() {
                       style={{
                         left: moveBadgePos.left,
                         top: moveBadgePos.top,
-                        transform: "translate(-50%, -50%)",
+                        transform: "translate(-58%, -42%)",
                       }}
                     >
                       <span
-                        className={`inline-flex size-7 items-center justify-center rounded-full border-2 border-white/85 text-[12px] font-extrabold shadow-lg ${TAG_BADGE_CLASS[selectedMove.tag]}`}
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded-full border shadow-[0_1px_4px_rgba(0,0,0,0.35)] ${TAG_BADGE_CLASS[selectedMove.tag]} ${TAG_BADGE_RING[selectedMove.tag]}`}
                       >
-                        {TAG_SYMBOL[selectedMove.tag]}
+                        <TagBadgeIcon tag={selectedMove.tag} />
                       </span>
                     </div>
                   )}
