@@ -676,17 +676,22 @@ export function BotChessGame() {
       effective === "win" ? "win" : "loss";
     const nextElo = computeEloAfterBotMatch(start, botOutcome);
 
-    const { error } = await supabase
-      .from("profiles")
-      .update({ elo: nextElo, updated_at: new Date().toISOString() })
-      .eq("id", user.id);
-
-    if (error) {
-      setBanner(
-        "Elo güncellenemedi. profiles tablosu güncelleme izni veya RLS kurallarını kontrol et."
-      );
-      await refreshProfile();
-      return;
+    const { error: rpcError } = await supabase.rpc("update_elo", {
+      p_elo: nextElo,
+    });
+    if (rpcError) {
+      // RPC henüz uygulanmamış ortamlarda (ör. prod), eski yola fallback.
+      const { error: fallbackError } = await supabase
+        .from("profiles")
+        .update({ elo: nextElo, updated_at: new Date().toISOString() })
+        .eq("id", user.id);
+      if (fallbackError) {
+        setBanner(
+          `Elo güncellenemedi (${fallbackError.code ?? "403"}). Supabase'te update_elo.sql çalıştır ve RLS policy'lerini doğrula.`
+        );
+        await refreshProfile();
+        return;
+      }
     }
 
     await refreshLeagues().catch(() => undefined);
