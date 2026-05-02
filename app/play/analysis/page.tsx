@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -419,7 +419,7 @@ function buildComment(args: {
   return null;
 }
 
-export default function AnalysisPage() {
+function AnalysisPageInner() {
   const params = useSearchParams();
   const id = params.get("id");
   const [err, setErr] = useState<string | null>(null);
@@ -626,12 +626,26 @@ export default function AnalysisPage() {
 
   const selectedMove = moves[Math.max(0, selectedPly - 1)];
   const bestArrow = useMemo(() => {
-    if (!selectedMove?.bestUci) return [] as [string, string, string][];
+    if (!selectedMove?.bestUci) return [] as Array<{
+      startSquare: string;
+      endSquare: string;
+      color: string;
+    }>;
     try {
       const parsed = parseUciBestmove(selectedMove.bestUci);
-      return [[parsed.from, parsed.to, "#77a047"]] as [string, string, string][];
+      return [
+        {
+          startSquare: parsed.from,
+          endSquare: parsed.to,
+          color: "#77a047",
+        },
+      ];
     } catch {
-      return [] as [string, string, string][];
+      return [] as Array<{
+        startSquare: string;
+        endSquare: string;
+        color: string;
+      }>;
     }
   }, [selectedMove]);
 
@@ -696,7 +710,7 @@ export default function AnalysisPage() {
                       showNotation: true,
                       allowDragging: false,
                       pieces: MAESTRO_PIECES,
-                      customArrows: bestArrow,
+                      arrows: bestArrow,
                     }}
                   />
                   {selectedMove && moveBadgePos && (
@@ -805,6 +819,22 @@ export default function AnalysisPage() {
         )}
       </div>
     </ArenaShell>
+  );
+}
+
+export default function AnalysisPage() {
+  return (
+    <Suspense
+      fallback={
+        <ArenaShell>
+          <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+            <p className="text-sm text-[#9b9893]">Analiz yükleniyor...</p>
+          </div>
+        </ArenaShell>
+      }
+    >
+      <AnalysisPageInner />
+    </Suspense>
   );
 }
 
