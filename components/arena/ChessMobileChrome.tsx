@@ -90,7 +90,7 @@ export function ChessMobileBottomNav({
     disabled?: boolean;
   }[] = [
     { tab: "home", href: homeHref, label: "Ana sayfa", icon: CirclePlay },
-    { tab: "puzzles", href: "#", label: "Bulmacalar", icon: Puzzle, disabled: true },
+    { tab: "puzzles", href: "/play/puzzles", label: "Bulmacalar", icon: Puzzle },
     { tab: "learn", href: "/play/learn", label: "Öğren", icon: BookOpen },
     { tab: "watch", href: "#", label: "İzle", icon: Binoculars, disabled: true },
     { tab: "more", href: "#", label: "Daha fazla", icon: Menu, disabled: true },
@@ -106,6 +106,7 @@ export function ChessMobileBottomNav({
         const Icon = item.icon;
         const active =
           (item.tab === "home" && homeActive) ||
+          (item.tab === "puzzles" && (pathname?.startsWith("/play/puzzles") ?? false)) ||
           (item.tab === "learn" && (pathname?.startsWith("/play/learn") ?? false));
         const iconCls = active ? "text-white" : "text-[#9b9893]";
         const labelCls = active ? "text-white" : "text-[#9b9893]";

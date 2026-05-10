@@ -126,10 +126,10 @@ export default function OnlineLobbyPage() {
         </Suspense>
         <div className="border-b border-[#2a2926] bg-[#121212] px-1">
           <MobileListRow
-            static
+            href="/play/puzzles"
             thumb="♟"
             title="Günlük bulmaca"
-            subtitle="Yakında — taktik görevleri"
+            subtitle="3 seviye · 60 taktik görevi"
             right={
               <div className="mt-2 flex gap-3 text-[#81b64c]">
                 <span className="text-xs font-semibold">Bulmaca</span>

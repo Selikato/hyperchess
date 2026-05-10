@@ -85,6 +85,7 @@ export function ArenaShell({
 
   const arenaActive = pathname?.startsWith("/play/online") ?? false;
   const botActive = pathname?.startsWith("/play/bot") ?? false;
+  const puzzlesActive = pathname?.startsWith("/play/puzzles") ?? false;
 
   const display =
     (user?.user_metadata?.display_name as string | undefined)?.trim() ||
@@ -140,7 +141,12 @@ export function ArenaShell({
             icon={Cpu}
             active={botActive}
           />
-          <NavItem href="#" label="Bulmacalar" icon={Puzzle} active={false} disabled />
+          <NavItem
+            href="/play/puzzles"
+            label="Bulmacalar"
+            icon={Puzzle}
+            active={puzzlesActive}
+          />
           <NavItem
             href="/play/learn"
             label="Öğren"
