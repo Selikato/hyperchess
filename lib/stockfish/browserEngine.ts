@@ -180,14 +180,17 @@ export class StockfishBrowserEngine {
     fen: string,
     depth: number,
     multiPv = 3
-  ): Promise<Array<{ uci: string; evalCp: number | null }>> {
+  ): Promise<Array<{ uci: string; evalCp: number | null; evalMate: number | null }>> {
     if (this.disposed) throw new Error("Motor kapatıldı.");
     this.send(`setoption name MultiPV value ${Math.max(1, multiPv)}`);
     this.send("ucinewgame");
     this.send(`position fen ${fen}`);
     this.send(`go depth ${depth}`);
 
-    const byPv = new Map<number, { uci: string; evalCp: number | null }>();
+    const byPv = new Map<
+      number,
+      { uci: string; evalCp: number | null; evalMate: number | null }
+    >();
     for (;;) {
       const line = await withTimeout(
         this.readLine(),
@@ -203,6 +206,7 @@ export class StockfishBrowserEngine {
         byPv.set(idx, {
           uci: pvMove[1],
           evalCp: score.cp ?? prev?.evalCp ?? null,
+          evalMate: score.mate ?? prev?.evalMate ?? null,
         });
       }
       if (line.startsWith("bestmove")) {

@@ -43,9 +43,15 @@ type AnalyzedMove = {
   comment: string | null;
 };
 
-const ANALYSIS_DEPTH_PRIMARY = 20;
-const ANALYSIS_DEPTH_FALLBACK = 18;
-const MIN_THINK_MS = 1000;
+const ANALYSIS_DEPTH_FAST = 13;
+const ANALYSIS_MULTIPV = 3;
+
+type EvalSnapshot = {
+  bestUci: string | null;
+  evalCp: number | null;
+  evalMate: number | null;
+  topMoves: Array<{ uci: string; evalCp: number | null; evalMate: number | null }>;
+};
 
 const TAG_COLOR: Record<MoveTag, string> = {
   brilliant: "bg-sky-400",
@@ -127,14 +133,14 @@ function materialNoKing(fen: string, color: "w" | "b") {
   return sum;
 }
 
-function waitMs(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 function winProbFromCp(cpForMover: number | null) {
   if (cpForMover == null) return 0.5;
   const x = Math.max(-1000, Math.min(1000, cpForMover));
   return 1 / (1 + Math.exp(-x / 220));
+}
+
+function fenTurnIsWhite(fen: string) {
+  return (fen.split(" ")[1] ?? "w") === "w";
 }
 
 function classifyMove(args: {
@@ -468,15 +474,44 @@ function AnalysisPageInner() {
           }
         }
         const out: AnalyzedMove[] = [];
+        const evals: EvalSnapshot[] = [];
         let degradedCount = 0;
         const g = new Chess();
         if (!cancelled) {
-          setProgressText(`Analiz başladı: 0/${fens.length - 1} hamle`);
+          setProgressText(`Pozisyonlar analiz ediliyor: 0/${fens.length}`);
+        }
+        for (let i = 0; i < fens.length; i++) {
+          if (cancelled) return;
+          if (!cancelled) {
+            setProgressText(`Pozisyon ${i + 1}/${fens.length} analiz ediliyor...`);
+          }
+          try {
+            const topMoves = await engine.goTopMovesWithEval(
+              fens[i],
+              ANALYSIS_DEPTH_FAST,
+              ANALYSIS_MULTIPV
+            );
+            const best = topMoves[0];
+            evals[i] = {
+              bestUci: best?.uci ?? null,
+              evalCp: best?.evalCp ?? null,
+              evalMate: best?.evalMate ?? null,
+              topMoves,
+            };
+          } catch {
+            degradedCount += 1;
+            evals[i] = {
+              bestUci: null,
+              evalCp: 0,
+              evalMate: null,
+              topMoves: [],
+            };
+          }
         }
         for (let i = 0; i < fens.length - 1; i++) {
           if (cancelled) return;
           if (!cancelled) {
-            setProgressText(`Hamle ${i + 1}/${fens.length - 1} analiz ediliyor...`);
+            setProgressText(`Hamle ${i + 1}/${fens.length - 1} sınıflandırılıyor...`);
           }
           const fenBefore = fens[i];
           const fenAfter = fens[i + 1];
@@ -489,60 +524,16 @@ function AnalysisPageInner() {
             return (t.fen().split(" ")[0] ?? "") === (fenAfter.split(" ")[0] ?? "");
           });
           if (!played) continue;
-          const started = performance.now();
-          let quickTop: Array<{ uci: string; evalCp: number | null }> = [];
-          let deepBest: { bestmove: string; evalCp: number | null } | null = null;
-          let playedEval: number | null = null;
-          let playedEvalMate: number | null = null;
-          try {
-            quickTop = await engine.goTopMovesWithEval(
-              fenBefore,
-              ANALYSIS_DEPTH_FALLBACK,
-              3
-            );
-          } catch {
-            quickTop = [];
-          }
-          try {
-            deepBest = await engine.goBestMoveWithEval(fenBefore, ANALYSIS_DEPTH_PRIMARY);
-            const detailed = await engine.evaluateFenDetailed(
-              fenAfter,
-              ANALYSIS_DEPTH_PRIMARY
-            );
-            playedEval = detailed.evalCp;
-            playedEvalMate = detailed.evalMate;
-          } catch {
-            try {
-              deepBest = await engine.goBestMoveWithEval(
-                fenBefore,
-                ANALYSIS_DEPTH_FALLBACK
-              );
-              const detailed = await engine.evaluateFenDetailed(
-                fenAfter,
-                ANALYSIS_DEPTH_FALLBACK
-              );
-              playedEval = detailed.evalCp;
-              playedEvalMate = detailed.evalMate;
-            } catch {
-              degradedCount += 1;
-              deepBest = {
-                bestmove: `${played.from}${played.to}${played.promotion ?? ""}`,
-                evalCp: 0,
-              };
-              playedEval = 0;
-              playedEvalMate = null;
-            }
-          }
-          const elapsed = performance.now() - started;
-          if (elapsed < MIN_THINK_MS) {
-            await waitMs(MIN_THINK_MS - elapsed);
-          }
+          const beforeEval = evals[i];
+          const afterEval = evals[i + 1];
           // best.evalCp: fenBefore'da oynayan taraf perspektifi
-          const bestPerspective = deepBest?.evalCp ?? 0;
+          const bestPerspective = beforeEval?.evalCp ?? 0;
           const evalBeforeWhiteCp =
-            deepBest?.evalCp == null ? null : turn === "w" ? deepBest.evalCp : -deepBest.evalCp;
+            beforeEval?.evalCp == null ? null : turn === "w" ? beforeEval.evalCp : -beforeEval.evalCp;
           // playedEval: fenAfter'da sıra rakipte olduğu için perspektif ters çevrilir
-          const playedPerspective = playedEval == null ? null : -playedEval;
+          const playedPerspective = afterEval?.evalCp == null ? null : -afterEval.evalCp;
+          const playedEvalWhiteCp =
+            afterEval?.evalCp == null ? null : fenTurnIsWhite(fenAfter) ? afterEval.evalCp : -afterEval.evalCp;
           const loss =
             bestPerspective == null || playedPerspective == null
               ? 40
@@ -554,10 +545,10 @@ function AnalysisPageInner() {
             san: played.san,
             bestEvalForMover: bestPerspective,
             playedEvalForMover: playedPerspective,
-            bestUci: deepBest?.bestmove ?? null,
+            bestUci: beforeEval?.bestUci ?? null,
             playedUci: `${played.from}${played.to}${played.promotion ?? ""}`,
-            top3Uci: quickTop.map((x) => x.uci),
-            deepBestUci: deepBest?.bestmove ?? null,
+            top3Uci: beforeEval?.topMoves.map((x) => x.uci) ?? [],
+            deepBestUci: beforeEval?.bestUci ?? null,
             fenBefore,
             fenAfter,
           });
@@ -568,9 +559,9 @@ function AnalysisPageInner() {
             playedUci: `${played.from}${played.to}${played.promotion ?? ""}`,
             fenAfter,
             evalBeforeWhiteCp,
-            evalAfter: playedEval,
-            evalAfterMate: playedEvalMate,
-            bestUci: deepBest?.bestmove ?? null,
+            evalAfter: playedEvalWhiteCp,
+            evalAfterMate: afterEval?.evalMate ?? null,
+            bestUci: beforeEval?.bestUci ?? null,
             tag,
             lossCp: loss,
             comment: buildComment({
