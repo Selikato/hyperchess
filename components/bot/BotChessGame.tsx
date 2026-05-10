@@ -94,6 +94,11 @@ function sleep(ms: number) {
 }
 
 const MATCH_MS = 10 * 60 * 1000;
+const BOT_ELO_OPTIONS = Array.from({ length: 10 }, (_, index) => (index + 1) * 200);
+
+function skillLevelForBotElo(botElo: number) {
+  return Math.max(0, Math.min(20, Math.round((botElo / 2000) * 20)));
+}
 
 function formatClock(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -295,6 +300,7 @@ export function BotChessGame() {
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, CSSProperties>>({});
   const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
+  const [botElo, setBotElo] = useState(600);
   const [thinking, setThinking] = useState(false);
   const [engineReady, setEngineReady] = useState<
     "loading" | "ready" | "error"
@@ -359,7 +365,11 @@ export function BotChessGame() {
         setEngineError(null);
         await engine.connect();
         if (cancelled) return;
-        await engine.initUci({ skillLevel: 8, limitStrength: true, uciElo: 600 });
+        await engine.initUci({
+          skillLevel: skillLevelForBotElo(botElo),
+          limitStrength: true,
+          uciElo: botElo,
+        });
         if (cancelled) return;
         engineRef.current = engine;
         setEngineReady("ready");
@@ -379,7 +389,7 @@ export function BotChessGame() {
       engineRef.current = null;
       engine.dispose();
     };
-  }, []);
+  }, [botElo]);
 
   const squareStyles = useMemo(() => {
     const base = { ...dots };
@@ -657,6 +667,16 @@ export function BotChessGame() {
     setLiveElo(base);
   }, [clearSel, game, elo]);
 
+  const changeBotElo = useCallback(
+    (nextBotElo: number) => {
+      if (nextBotElo === botElo || thinking) return;
+      setBotElo(nextBotElo);
+      resetBoard();
+      setEngineReady("loading");
+    },
+    [botElo, resetBoard, thinking]
+  );
+
   const topCrown: "win" | "loss" | "draw" | null =
     (modal.outcome === "loss" || modal.outcome === "resign")
       ? "win"
@@ -741,7 +761,7 @@ export function BotChessGame() {
           avatarSrc="/stockfish-avatar.png"
           fallbackLetter="S"
           name="Stockfish"
-          eloText="600"
+          eloText={String(botElo)}
           clockMs={blackClockMs}
           timerVariant="dark"
           crown={topCrown}
@@ -796,6 +816,34 @@ export function BotChessGame() {
           captured={materialInfo.capturedByWhite}
           materialDelta={materialInfo.whiteDelta}
         />
+      </div>
+
+      <div className="rounded-lg border border-[#3c3b36] bg-[#201f1b] p-2">
+        <div className="mb-2 flex items-center justify-between gap-2 px-1">
+          <span className="text-xs font-semibold uppercase tracking-wide text-[#9b9893]">
+            Bot gücü
+          </span>
+          <span className="rounded bg-[#2a2926] px-2 py-0.5 text-xs font-bold text-[#81b64c]">
+            {botElo} Elo
+          </span>
+        </div>
+        <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-10">
+          {BOT_ELO_OPTIONS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => changeBotElo(option)}
+              disabled={thinking || engineReady === "loading"}
+              className={`rounded-md border px-2 py-1.5 text-[11px] font-bold transition disabled:cursor-not-allowed disabled:opacity-45 ${
+                botElo === option
+                  ? "border-[#81b64c] bg-[#81b64c] text-[#1a2312]"
+                  : "border-[#3c3b36] bg-[#2a2926] text-[#c8c6c2] hover:border-[#81b64c]/60"
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="relative mt-1 flex flex-wrap justify-center gap-2">

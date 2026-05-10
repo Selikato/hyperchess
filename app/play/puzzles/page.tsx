@@ -5,7 +5,7 @@ import { Chess } from "chess.js";
 import type { Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import type { PieceDropHandlerArgs, PieceHandlerArgs, SquareHandlerArgs } from "react-chessboard";
-import { ArrowLeft, CheckCircle2, RotateCcw } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Eye, RotateCcw } from "lucide-react";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 import {
@@ -43,6 +43,7 @@ export default function PuzzlesPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, React.CSSProperties>>({});
   const [solved, setSolved] = useState(false);
+  const [solutionShown, setSolutionShown] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const puzzles = useMemo(
@@ -52,6 +53,20 @@ export default function PuzzlesPage() {
   const puzzle = puzzles[index];
   const currentFen = fen ?? puzzle?.fen ?? new Chess().fen();
   const game = useMemo(() => new Chess(currentFen), [currentFen]);
+  const solutionSan = useMemo(() => {
+    if (!puzzle) return null;
+    try {
+      const preview = new Chess(puzzle.fen);
+      const move = preview.move({
+        from: puzzle.solution.slice(0, 2) as Square,
+        to: puzzle.solution.slice(2, 4) as Square,
+        promotion: puzzle.solution[4],
+      });
+      return move?.san ?? puzzle.solution;
+    } catch {
+      return puzzle.solution;
+    }
+  }, [puzzle]);
   const squareStyles = useMemo(() => {
     const next = { ...dots };
     if (selected) next[selected] = { ...(next[selected] ?? {}), ...SELECTED_STYLE };
@@ -66,6 +81,7 @@ export default function PuzzlesPage() {
     setSelected(null);
     setDots({});
     setSolved(false);
+    setSolutionShown(false);
     setMessage(null);
   };
 
@@ -77,6 +93,7 @@ export default function PuzzlesPage() {
     setSelected(null);
     setDots({});
     setSolved(false);
+    setSolutionShown(false);
     setMessage(null);
   };
 
@@ -86,7 +103,28 @@ export default function PuzzlesPage() {
     setSelected(null);
     setDots({});
     setSolved(false);
+    setSolutionShown(false);
     setMessage(null);
+  };
+
+  const playSolutionMove = (showSolution: boolean) => {
+    if (!puzzle) return false;
+    const next = new Chess(puzzle.fen);
+    const moved = next.move({
+      from: puzzle.solution.slice(0, 2) as Square,
+      to: puzzle.solution.slice(2, 4) as Square,
+      promotion: puzzle.solution[4],
+    });
+    if (!moved) return false;
+    setFen(next.fen());
+    setSolved(true);
+    setSolutionShown(showSolution);
+    setSelected(null);
+    setDots({});
+    setMessage(
+      showSolution ? `Çözüm: ${moved.san}` : `Doğru hamle: ${moved.san}`
+    );
+    return true;
   };
 
   const tryMove = (from: string, to: string) => {
@@ -99,15 +137,7 @@ export default function PuzzlesPage() {
       return false;
     }
 
-    const next = new Chess(currentFen);
-    const moved = next.move({ from: from as Square, to: to as Square });
-    if (!moved) return false;
-    setFen(next.fen());
-    setSolved(true);
-    setSelected(null);
-    setDots({});
-    setMessage("Doğru hamle!");
-    return true;
+    return playSolutionMove(false);
   };
 
   const onSquareClick = ({ square, piece }: SquareHandlerArgs) => {
@@ -228,7 +258,12 @@ export default function PuzzlesPage() {
                 {message}
               </p>
             )}
-            <div className="mt-4 flex gap-2">
+            {solutionShown && solutionSan && (
+              <p className="mt-3 rounded-md border border-sky-500/30 bg-sky-950/20 px-3 py-2 text-sm text-sky-100">
+                Tahtada çözüm oynandı: <span className="font-bold">{solutionSan}</span>
+              </p>
+            )}
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={resetCurrent}
@@ -239,6 +274,17 @@ export default function PuzzlesPage() {
               </button>
               <button
                 type="button"
+                onClick={() => playSolutionMove(true)}
+                disabled={solved}
+                className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-sky-500/40 bg-sky-950/30 px-3 py-2 text-sm font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Eye className="size-4" />
+                Çözümü göster
+              </button>
+            </div>
+            <div className="mt-2">
+              <button
+                type="button"
                 onClick={() => {
                   if (isLast) {
                     setBucketId(null);
@@ -247,7 +293,7 @@ export default function PuzzlesPage() {
                   loadPuzzle(index + 1);
                 }}
                 disabled={!solved}
-                className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-[#6f9f43] bg-[#81b64c] px-3 py-2 text-sm font-bold text-[#1f2a18] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-[#6f9f43] bg-[#81b64c] px-3 py-2 text-sm font-bold text-[#1f2a18] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <CheckCircle2 className="size-4" />
                 {isLast ? "Bitir" : "Sonraki"}

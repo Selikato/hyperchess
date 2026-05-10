@@ -40,6 +40,41 @@ type PuzzleMoveSpec = [
   solution: string,
 ];
 
+const CONTEXT_PIECES: PiecePlacement[] = [
+  ["e1", "K"],
+  ["e8", "k"],
+  ["a1", "R"],
+  ["d1", "Q"],
+  ["f1", "R"],
+  ["c1", "B"],
+  ["g2", "B"],
+  ["c3", "N"],
+  ["f3", "N"],
+  ["a2", "P"],
+  ["b2", "P"],
+  ["c2", "P"],
+  ["d3", "P"],
+  ["e4", "P"],
+  ["f2", "P"],
+  ["g3", "P"],
+  ["h2", "P"],
+  ["a8", "r"],
+  ["d8", "q"],
+  ["f8", "r"],
+  ["c8", "b"],
+  ["g7", "b"],
+  ["c6", "n"],
+  ["f6", "n"],
+  ["a7", "p"],
+  ["b7", "p"],
+  ["c7", "p"],
+  ["d6", "p"],
+  ["e5", "p"],
+  ["f7", "p"],
+  ["g6", "p"],
+  ["h7", "p"],
+];
+
 function fenFromPieces(pieces: PiecePlacement[], turn: "w" | "b" = "w") {
   const board = Array.from({ length: 8 }, () => Array<string>(8).fill(""));
   for (const [square, piece] of pieces) {
@@ -67,6 +102,42 @@ function fenFromPieces(pieces: PiecePlacement[], turn: "w" | "b" = "w") {
   return `${rows.join("/")} ${turn} - - 0 1`;
 }
 
+function pathBetween(from: string, to: string) {
+  const fromFile = from.charCodeAt(0) - "a".charCodeAt(0);
+  const fromRank = Number(from[1]);
+  const toFile = to.charCodeAt(0) - "a".charCodeAt(0);
+  const toRank = Number(to[1]);
+  const fileDelta = Math.sign(toFile - fromFile);
+  const rankDelta = Math.sign(toRank - fromRank);
+  const sameFile = fromFile === toFile;
+  const sameRank = fromRank === toRank;
+  const sameDiagonal = Math.abs(toFile - fromFile) === Math.abs(toRank - fromRank);
+
+  if (!sameFile && !sameRank && !sameDiagonal) return [];
+
+  const squares: string[] = [];
+  let file = fromFile + fileDelta;
+  let rank = fromRank + rankDelta;
+  while (file !== toFile || rank !== toRank) {
+    squares.push(`${String.fromCharCode("a".charCodeAt(0) + file)}${rank}`);
+    file += fileDelta;
+    rank += rankDelta;
+  }
+  return squares;
+}
+
+function puzzleFenFromSpec(
+  from: string,
+  whitePiece: string,
+  target: string,
+  blackPiece: string
+) {
+  const blocked = new Set([from, target, ...pathBetween(from, target)]);
+  const pieces = CONTEXT_PIECES.filter(([square]) => !blocked.has(square));
+  pieces.push([from, whitePiece], [target, blackPiece]);
+  return fenFromPieces(pieces);
+}
+
 function buildPuzzleSet(
   bucket: PuzzleBucketId,
   prefix: string,
@@ -78,12 +149,7 @@ function buildPuzzleSet(
     bucket,
     title: `${prefix} ${index + 1}`,
     theme,
-    fen: fenFromPieces([
-      ["e1", "K"],
-      ["e8", "k"],
-      [from, whitePiece],
-      [target, blackPiece],
-    ]),
+    fen: puzzleFenFromSpec(from, whitePiece, target, blackPiece),
     solution,
   }));
 }
