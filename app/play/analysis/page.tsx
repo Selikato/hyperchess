@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Chess } from "chess.js";
@@ -484,7 +483,7 @@ function AnalysisPageInner() {
           g.load(fenBefore);
           const turn = g.turn();
           const legal = g.moves({ verbose: true });
-          let played = legal.find((mv) => {
+          const played = legal.find((mv) => {
             const t = new Chess(fenBefore);
             t.move(mv);
             return (t.fen().split(" ")[0] ?? "") === (fenAfter.split(" ")[0] ?? "");
@@ -687,8 +686,8 @@ function AnalysisPageInner() {
         {!loading && !err && (
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="rounded-xl border border-[#3c3b36] bg-[#201f1b] p-3">
-              <div className="flex gap-3">
-                <div className="relative h-[520px] w-5 overflow-hidden rounded bg-[#111]">
+              <div className="flex items-stretch gap-2 sm:gap-3">
+                <div className="relative w-4 shrink-0 overflow-hidden rounded bg-[#111] sm:w-5">
                   <div
                     className="absolute inset-x-0 bg-white transition-all"
                     style={{ top: 0, height: `${evalPct}%` }}
@@ -698,13 +697,13 @@ function AnalysisPageInner() {
                     style={{ height: `${100 - evalPct}%` }}
                   />
                 </div>
-                <div className="relative min-w-0 flex-1 overflow-hidden rounded-md border border-[#3c3b36]">
+                <div className="relative aspect-square min-w-0 flex-1 overflow-hidden rounded-md border border-[#3c3b36]">
                   <Chessboard
                     options={{
                       id: "analysis-board",
                       position: boardFen,
                       boardOrientation: "white",
-                      boardStyle: { width: "100%", maxWidth: "100%" },
+                      boardStyle: { width: "100%", height: "100%", maxWidth: "100%" },
                       lightSquareStyle: { backgroundColor: "#d9dee2" },
                       darkSquareStyle: { backgroundColor: "#a4adb5" },
                       showNotation: true,

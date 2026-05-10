@@ -24,6 +24,7 @@ import type {
 import { supabase } from "@/lib/supabaseClient";
 import { useProfile } from "@/components/ProfileProvider";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
+import { PromotionChoiceDialog } from "@/components/PromotionChoiceDialog";
 import {
   applyMove,
   refreshLeagues,
@@ -36,6 +37,11 @@ import {
   setCurrentMatch,
 } from "@/lib/arena/api";
 import type { MatchRow } from "@/lib/arena/types";
+import {
+  getPromotionChoices,
+  type PendingPromotion,
+  type PromotionPiece,
+} from "@/lib/chess/promotion";
 import { computeEloAfterOnlineMatch, DEFAULT_ELO } from "@/lib/elo";
 import { saveAnalysisSession } from "@/lib/analysis/session";
 
@@ -279,6 +285,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   const [banner, setBanner] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, CSSProperties>>({});
+  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const [modal, setModal] = useState<{ open: boolean; title: string; body: string }>({
     open: false,
     title: "",
@@ -377,12 +384,15 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   useEffect(() => {
     eloAppliedRef.current = false;
-    setEloDelta(null);
     const initialHistory = [STARTING_FEN];
     historyRef.current = initialHistory;
-    setHistory(initialHistory);
-    setHistoryIndex(0);
     historyIndexRef.current = 0;
+
+    queueMicrotask(() => {
+      setEloDelta(null);
+      setHistory(initialHistory);
+      setHistoryIndex(0);
+    });
   }, [matchId]);
 
   const attemptedPrivateJoin = useRef(false);
@@ -612,8 +622,10 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   useEffect(() => {
     if (!match?.id) return;
-    setWhiteClockMs(MATCH_MS);
-    setBlackClockMs(MATCH_MS);
+    queueMicrotask(() => {
+      setWhiteClockMs(MATCH_MS);
+      setBlackClockMs(MATCH_MS);
+    });
   }, [match?.id]);
 
   const canInteract =
@@ -669,20 +681,27 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   );
 
   const tryLocalMove = useCallback(
-    (from: string, to: string): boolean => {
+    (from: string, to: string, promotion?: PromotionPiece): boolean => {
       if (!user || !match || myColor === null) return false;
       const g = new Chess(gameRef.current.fen());
       if (g.turn() !== myColor) return false;
+      const promotionChoices = getPromotionChoices(g, from, to);
+      if (promotionChoices.length > 0 && !promotion) {
+        setPendingPromotion({ from, to });
+        clearSel();
+        return false;
+      }
       const m = g.move({
         from: from as Square,
         to: to as Square,
-        promotion: "q",
+        promotion,
       });
       if (!m) return false;
+      setPendingPromotion(null);
       void submitMoveAfterLocal(g);
       return true;
     },
-    [user, match, myColor, submitMoveAfterLocal]
+    [user, match, myColor, clearSel, submitMoveAfterLocal]
   );
 
   const onSquareClick = useCallback(
@@ -830,6 +849,16 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           materialDelta={topDelta}
         />
         <div className="relative w-full overflow-hidden rounded-sm shadow-md">
+          {pendingPromotion && (
+            <PromotionChoiceDialog
+              onSelect={(piece) => {
+                const pending = pendingPromotion;
+                setPendingPromotion(null);
+                void tryLocalMove(pending.from, pending.to, piece);
+              }}
+              onCancel={() => setPendingPromotion(null)}
+            />
+          )}
           <Chessboard
             options={{
               id: `online-${matchId}`,

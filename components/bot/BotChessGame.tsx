@@ -13,6 +13,7 @@ import type {
   SquareHandlerArgs,
 } from "react-chessboard";
 import { supabase } from "@/lib/supabaseClient";
+import { PromotionChoiceDialog } from "@/components/PromotionChoiceDialog";
 import {
   StockfishBrowserEngine,
   parseUciBestmove,
@@ -26,6 +27,11 @@ import {
 } from "@/lib/elo";
 import { refreshLeagues } from "@/lib/arena/api";
 import { saveAnalysisSession } from "@/lib/analysis/session";
+import {
+  getPromotionChoices,
+  type PendingPromotion,
+  type PromotionPiece,
+} from "@/lib/chess/promotion";
 
 const SELECTED_STYLE: CSSProperties = {
   boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
@@ -288,6 +294,7 @@ export function BotChessGame() {
   const [historyIndex, setHistoryIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, CSSProperties>>({});
+  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const [thinking, setThinking] = useState(false);
   const [engineReady, setEngineReady] = useState<
     "loading" | "ready" | "error"
@@ -452,16 +459,23 @@ export function BotChessGame() {
   );
 
   const applyUserMove = useCallback(
-    (from: string, to: string): boolean => {
+    (from: string, to: string, promotion?: PromotionPiece): boolean => {
       if (!canInteract) return false;
       if (game.turn() !== "w") return false;
       try {
+        const promotionChoices = getPromotionChoices(game, from, to);
+        if (promotionChoices.length > 0 && !promotion) {
+          setPendingPromotion({ from, to });
+          clearSel();
+          return false;
+        }
         const m = game.move({
           from: from as Square,
           to: to as Square,
-          promotion: "q",
+          promotion,
         });
         if (!m) return false;
+        setPendingPromotion(null);
         pushFenSnapshot(game.fen());
         clearSel();
         const end = outcomeAfterMove(game);
@@ -633,6 +647,7 @@ export function BotChessGame() {
     previousEvalRef.current = null;
     setModal({ open: false, title: "", body: "", outcome: null });
     setBanner(null);
+    setPendingPromotion(null);
     botBusyRef.current = false;
     setThinking(false);
     setWhiteClockMs(MATCH_MS);
@@ -734,6 +749,16 @@ export function BotChessGame() {
           materialDelta={materialInfo.blackDelta}
         />
         <div className="relative w-full overflow-hidden rounded-sm shadow-md">
+          {pendingPromotion && (
+            <PromotionChoiceDialog
+              onSelect={(piece) => {
+                const pending = pendingPromotion;
+                setPendingPromotion(null);
+                applyUserMove(pending.from, pending.to, piece);
+              }}
+              onCancel={() => setPendingPromotion(null)}
+            />
+          )}
           {analysisBadge && (
             <div className="absolute -right-8 top-3 z-20 hidden w-7 items-center justify-center rounded-full border border-zinc-400 bg-zinc-100 text-base font-bold text-zinc-900 shadow sm:flex">
               {analysisBadge.mark}

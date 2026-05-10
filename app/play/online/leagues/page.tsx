@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import {
   listLeagueSettings,
@@ -30,15 +30,18 @@ export default function LeaguesPage() {
   });
   const [err, setErr] = useState<string | null>(null);
 
-  const load = useMemo(
-    () => async () => {
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
       try {
         await refreshLeagues().catch(() => undefined);
         const s = await listLeagueSettings();
-        setSettings(s);
         const res = await Promise.all(
           leagueOrder.map(async (l) => [l, await listTopPlayersForLeague(l)] as const)
         );
+        if (!active) return;
+        setSettings(s);
         setTops({
           GM: res.find((x) => x[0] === "GM")?.[1] ?? [],
           IM: res.find((x) => x[0] === "IM")?.[1] ?? [],
@@ -48,15 +51,16 @@ export default function LeaguesPage() {
         });
         setErr(null);
       } catch (e) {
+        if (!active) return;
         setErr(e instanceof Error ? e.message : "Lig bilgileri alınamadı.");
       }
-    },
-    []
-  );
+    }
 
-  useEffect(() => {
     void load();
-  }, [load]);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const minByLeague = (league: LeagueCode) =>
     settings.find((s) => s.league === league)?.min_elo ?? "-";

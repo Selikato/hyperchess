@@ -6,6 +6,12 @@ import { Chessboard } from "react-chessboard";
 import type { PieceDropHandlerArgs, PieceHandlerArgs, SquareHandlerArgs } from "react-chessboard";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
+import { PromotionChoiceDialog } from "@/components/PromotionChoiceDialog";
+import {
+  getPromotionChoices,
+  type PendingPromotion,
+  type PromotionPiece,
+} from "@/lib/chess/promotion";
 
 type LessonMove = { move: string; purpose: string };
 type OpeningLesson = {
@@ -166,9 +172,10 @@ export default function LearnPage() {
   const [practiceMode, setPracticeMode] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, React.CSSProperties>>({});
+  const [pendingPromotion, setPendingPromotion] = useState<PendingPromotion | null>(null);
   const gameRef = useRef(new Chess());
   const opponentMoveTimeoutRef = useRef<number | null>(null);
-  const [fen, setFen] = useState(gameRef.current.fen());
+  const [fen, setFen] = useState(() => new Chess().fen());
 
   const filtered = useMemo(
     () => LESSONS.filter((l) => (kindFilter === "all" ? true : l.kind === kindFilter)),
@@ -273,24 +280,36 @@ export default function LearnPage() {
     tick();
     const id = window.setInterval(tick, 3000);
     return () => window.clearInterval(id);
-  }, [watching, active]);
+  }, [watching, active, userColor]);
 
-  const onDrop = ({ sourceSquare, targetSquare }: PieceDropHandlerArgs) => {
+  const onDrop = (
+    { sourceSquare, targetSquare }: PieceDropHandlerArgs,
+    promotion?: PromotionPiece
+  ) => {
     if (watching || !sourceSquare || !targetSquare) return false;
     if (sourceSquare === targetSquare) return false;
     try {
       if (practiceMode) {
         if (gameRef.current.turn() !== userColor) return false;
         const expected = active.watchMoves[watchIndex];
-        const played = `${sourceSquare}${targetSquare}`;
-        if (played !== expected) return false;
+        const playedBase = `${sourceSquare}${targetSquare}`;
+        const played = promotion ? `${playedBase}${promotion}` : playedBase;
+        if (promotion ? played !== expected : !expected.startsWith(playedBase)) return false;
+      }
+      const promotionChoices = getPromotionChoices(gameRef.current, sourceSquare, targetSquare);
+      if (promotionChoices.length > 0 && !promotion) {
+        setPendingPromotion({ from: sourceSquare, to: targetSquare });
+        setSelected(null);
+        setDots({});
+        return false;
       }
       const moved = gameRef.current.move({
         from: sourceSquare,
         to: targetSquare,
-        promotion: "q",
+        promotion,
       });
       if (!moved) return false;
+      setPendingPromotion(null);
       setSelected(null);
       setDots({});
       setFen(gameRef.current.fen());
@@ -368,6 +387,7 @@ export default function LearnPage() {
     setWatchDone(false);
     setWatchIndex(firstUserMoveIndex);
     setPracticeMode(false);
+    setPendingPromotion(null);
     gameRef.current = new Chess();
     if (userColor === "b") {
       applyUciMove(gameRef.current, active.watchMoves[0]);
@@ -462,7 +482,24 @@ export default function LearnPage() {
                     }
               }
             >
-              <div>
+              <div className="relative">
+                {pendingPromotion && (
+                  <PromotionChoiceDialog
+                    onSelect={(piece) => {
+                      const pending = pendingPromotion;
+                      setPendingPromotion(null);
+                      onDrop(
+                        {
+                          sourceSquare: pending.from,
+                          targetSquare: pending.to,
+                          piece: { pieceType: "" },
+                        } as PieceDropHandlerArgs,
+                        piece
+                      );
+                    }}
+                    onCancel={() => setPendingPromotion(null)}
+                  />
+                )}
                 <Chessboard options={{ id: "learn-board", position: fen, boardOrientation, boardStyle: { width: "100%", maxWidth: "100%" }, squareStyles, lightSquareStyle: { backgroundColor: "#d9dee2" }, darkSquareStyle: { backgroundColor: "#a4adb5" }, showNotation: true, allowDragging: !watching, pieces: MAESTRO_PIECES, onSquareClick, onPieceClick, onPieceDrop: onDrop }} />
               </div>
             </div>
