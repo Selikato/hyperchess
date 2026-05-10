@@ -39,7 +39,7 @@ export function NotificationInbox() {
   if (!user) return null;
 
   return (
-    <div className="fixed right-3 top-3 z-[220]">
+    <div className="fixed right-3 top-3 z-[220] flex items-end">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -55,7 +55,7 @@ export function NotificationInbox() {
       </button>
 
       {open && (
-        <div className="mt-2 w-[min(92vw,360px)] rounded-xl border border-[#3c3b36] bg-[#1b1a17] p-3 shadow-2xl">
+        <div className="absolute right-0 top-full mt-2 w-[min(92vw,360px)] rounded-xl border border-[#3c3b36] bg-[#1b1a17] p-3 shadow-2xl">
           <p className="mb-2 text-sm font-semibold text-white">Bildirimler</p>
           {topItems.length === 0 ? (
             <p className="text-xs text-[#9b9893]">Yeni bildirim yok.</p>
