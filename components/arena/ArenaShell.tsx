@@ -8,7 +8,6 @@ import {
   Cpu,
   LogOut,
   Puzzle,
-  Search,
   Trophy,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
@@ -18,6 +17,7 @@ import {
   ChessMobileTopBar,
   chessMobileMainPaddingClass,
 } from "@/components/arena/ChessMobileChrome";
+import { ArenaSidebarAd } from "@/components/ads/ArenaSidebarAd";
 
 /** Chess.com tarzı koyu palet */
 export const arena = {
@@ -171,13 +171,14 @@ export function ArenaShell({
         </nav>
 
         <div className="mt-auto border-t border-white/5 p-2">
-          <button
-            type="button"
-            className={`mb-2 flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm ${arena.muted} hover:bg-white/5 hover:text-[#e8e6e3]`}
-          >
-            <Search className="size-[18px] shrink-0" aria-hidden />
-            <span className="truncate">Ara</span>
-          </button>
+          <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 px-2 text-[10px] text-[#6f6d6a]">
+            <Link href="/terms" className="hover:text-[#bababa]">
+              Hizmet Şartları
+            </Link>
+            <Link href="/privacy" className="hover:text-[#bababa]">
+              Gizlilik
+            </Link>
+          </div>
           {user && (
             <div className="flex items-center gap-2 rounded-md px-2 py-2">
               <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#454240] text-sm font-bold text-white">
@@ -210,6 +211,7 @@ export function ArenaShell({
             </div>
           )}
         </div>
+        <ArenaSidebarAd />
       </aside>
 
       {/* Orta + sağ */}

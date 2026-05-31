@@ -34,6 +34,12 @@ export function SessionBar() {
     );
   }
 
+  const sessionLabel =
+    (user.user_metadata?.display_name as string | undefined)?.trim() ||
+    (user.user_metadata?.full_name as string | undefined)?.trim() ||
+    user.email?.split("@")[0] ||
+    "Oyuncu";
+
   return (
     <div className="flex max-w-full flex-col items-end gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
       <div className="flex flex-col items-end gap-0.5 text-right sm:items-end">
@@ -43,10 +49,10 @@ export function SessionBar() {
               <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${titleColor}`}>
                 {title}
               </span>
-              {user.email}
+              {sessionLabel}
             </span>
           ) : (
-            user.email
+            sessionLabel
           )}
         </span>
         <span className="text-xs font-semibold tabular-nums text-zinc-400">

@@ -12,6 +12,7 @@ import {
   type PendingPromotion,
   type PromotionPiece,
 } from "@/lib/chess/promotion";
+import { playMoveSoundForMove, primeChessAudio } from "@/lib/chess/sounds";
 
 type LessonMove = { move: string; purpose: string };
 type OpeningLesson = {
@@ -119,7 +120,9 @@ function applyUciMove(game: Chess, uci: string) {
   const to = uci.slice(2, 4);
   const promotion = uci.length > 4 ? uci.slice(4, 5) : undefined;
   try {
-    return Boolean(game.move({ from, to, promotion }));
+    const moved = game.move({ from, to, promotion });
+    if (moved) playMoveSoundForMove(moved);
+    return Boolean(moved);
   } catch {
     return false;
   }
@@ -309,6 +312,7 @@ export default function LearnPage() {
         promotion,
       });
       if (!moved) return false;
+      playMoveSoundForMove(moved);
       setPendingPromotion(null);
       setSelected(null);
       setDots({});
@@ -335,6 +339,7 @@ export default function LearnPage() {
   }, [dots, selected]);
 
   const onSquareClick = ({ square, piece }: SquareHandlerArgs) => {
+    primeChessAudio();
     if (watching) return;
     if (practiceMode && gameRef.current.turn() !== userColor) return;
 

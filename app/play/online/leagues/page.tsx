@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { RequireAuth } from "@/components/RequireAuth";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import {
   listLeagueSettings,
@@ -67,6 +68,7 @@ export default function LeaguesPage() {
 
   return (
     <ArenaShell>
+      <RequireAuth>
       <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
         <h1 className="text-2xl font-bold text-white">Lig Skorbordu</h1>
         <p className="mt-1 text-sm text-[#9b9893]">
@@ -113,6 +115,7 @@ export default function LeaguesPage() {
           ))}
         </div>
       </div>
+      </RequireAuth>
     </ArenaShell>
   );
 }

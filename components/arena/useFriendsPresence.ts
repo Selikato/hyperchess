@@ -25,7 +25,7 @@ export function useFriendsPresence(friendIds: string[]) {
         }
         setPresenceKeys(next);
       })
-      .subscribe(async (status) => {
+      .subscribe(async (status: string) => {
         if (status === "SUBSCRIBED") {
           await channel.track({
             user_id: user.id,

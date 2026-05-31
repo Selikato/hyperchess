@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { RequireAuth } from "@/components/RequireAuth";
 import { ArenaShell } from "@/components/arena/ArenaShell";
 import { useProfile } from "@/components/ProfileProvider";
 import { createTournament, deleteTournament, listTournaments } from "@/lib/arena/api";
@@ -38,6 +39,7 @@ export default function TournamentsPage() {
 
   return (
     <ArenaShell>
+      <RequireAuth>
       <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
         <h1 className="text-2xl font-bold text-white">Turnuvalar</h1>
         <p className="mt-1 text-sm text-[#9b9893]">Arena turnuvaları ve puan tabloları.</p>
@@ -169,6 +171,7 @@ export default function TournamentsPage() {
           )}
         </div>
       </div>
+      </RequireAuth>
     </ArenaShell>
   );
 }

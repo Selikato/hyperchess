@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useProfile } from "@/components/ProfileProvider";
 import { listUnreadNotifications, markNotificationRead } from "@/lib/arena/api";
 import type { NotificationRow } from "@/lib/arena/types";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 
 export function NotificationInbox() {
@@ -21,7 +22,7 @@ export function NotificationInbox() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
-        (payload) => {
+        (payload: RealtimePostgresChangesPayload<NotificationRow>) => {
           const row = payload.new as NotificationRow;
           if (!row?.id || row.read_at) return;
           setItems((prev) => [row, ...prev]);

@@ -6,13 +6,23 @@ import type { Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import type { PieceDropHandlerArgs, PieceHandlerArgs, SquareHandlerArgs } from "react-chessboard";
 import { ArrowLeft, CheckCircle2, Eye, RotateCcw } from "lucide-react";
+import { AdUnit } from "@/components/ads/AdUnit";
 import { ArenaShell } from "@/components/arena/ArenaShell";
+import { placementReady } from "@/lib/ads/config";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
+import { formatMaterialGain } from "@/lib/chess/material";
 import {
+  countWhiteMovesInLine,
   getPuzzlesForBucket,
+  getSolutionLine,
+  getTrapMessage,
+  getWrongCaptureFeedback,
+  isMultiMovePuzzle,
   PUZZLE_BUCKETS,
   type PuzzleBucketId,
+  type PuzzleSpec,
 } from "@/lib/chess/puzzles";
+import { playMoveSoundForMove, primeChessAudio } from "@/lib/chess/sounds";
 
 const SELECTED_STYLE = {
   boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
@@ -23,6 +33,14 @@ const DOT_STYLE = {
   backgroundImage:
     "radial-gradient(circle, rgba(0,0,0,0.38) 0%, rgba(0,0,0,0.38) 20%, transparent 28%)",
 };
+
+function uciToMove(uci: string) {
+  return {
+    from: uci.slice(0, 2) as Square,
+    to: uci.slice(2, 4) as Square,
+    promotion: uci[4] as "q" | "r" | "b" | "n" | undefined,
+  };
+}
 
 function legalDots(game: Chess, from: Square) {
   const out: Record<string, React.CSSProperties> = {};
@@ -36,10 +54,29 @@ function legalDots(game: Chess, from: Square) {
   return out;
 }
 
+function whiteMoveNumber(lineIndex: number): number {
+  return Math.floor(lineIndex / 2) + 1;
+}
+
+function formatLineSans(fen: string, line: string[]): string {
+  const game = new Chess(fen);
+  const parts: string[] = [];
+  for (const uci of line) {
+    try {
+      const move = game.move(uciToMove(uci));
+      if (move) parts.push(move.san);
+    } catch {
+      parts.push(uci);
+    }
+  }
+  return parts.join(" ");
+}
+
 export default function PuzzlesPage() {
   const [bucketId, setBucketId] = useState<PuzzleBucketId | null>(null);
   const [index, setIndex] = useState(0);
   const [fen, setFen] = useState<string | null>(null);
+  const [lineIndex, setLineIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [dots, setDots] = useState<Record<string, React.CSSProperties>>({});
   const [solved, setSolved] = useState(false);
@@ -51,96 +88,150 @@ export default function PuzzlesPage() {
     [bucketId]
   );
   const puzzle = puzzles[index];
+  const solutionLine = useMemo(
+    () => (puzzle ? getSolutionLine(puzzle) : []),
+    [puzzle]
+  );
+  const multiMove = puzzle ? isMultiMovePuzzle(puzzle) : false;
+  const totalWhiteMoves = useMemo(
+    () => countWhiteMovesInLine(solutionLine),
+    [solutionLine]
+  );
   const currentFen = fen ?? puzzle?.fen ?? new Chess().fen();
   const game = useMemo(() => new Chess(currentFen), [currentFen]);
   const solutionSan = useMemo(() => {
     if (!puzzle) return null;
+    if (multiMove) return formatLineSans(puzzle.fen, solutionLine);
     try {
       const preview = new Chess(puzzle.fen);
-      const move = preview.move({
-        from: puzzle.solution.slice(0, 2) as Square,
-        to: puzzle.solution.slice(2, 4) as Square,
-        promotion: puzzle.solution[4],
-      });
+      const move = preview.move(uciToMove(puzzle.solution));
       return move?.san ?? puzzle.solution;
     } catch {
       return puzzle.solution;
     }
-  }, [puzzle]);
+  }, [puzzle, multiMove, solutionLine]);
   const squareStyles = useMemo(() => {
     const next = { ...dots };
     if (selected) next[selected] = { ...(next[selected] ?? {}), ...SELECTED_STYLE };
     return next;
   }, [dots, selected]);
 
-  const chooseBucket = (id: PuzzleBucketId) => {
-    const nextPuzzles = getPuzzlesForBucket(id);
-    setBucketId(id);
-    setIndex(0);
-    setFen(nextPuzzles[0]?.fen ?? new Chess().fen());
+  const resetPuzzleState = (nextPuzzle: PuzzleSpec | undefined) => {
+    setFen(nextPuzzle?.fen ?? new Chess().fen());
+    setLineIndex(0);
     setSelected(null);
     setDots({});
     setSolved(false);
     setSolutionShown(false);
     setMessage(null);
+  };
+
+  const chooseBucket = (id: PuzzleBucketId) => {
+    const nextPuzzles = getPuzzlesForBucket(id);
+    setBucketId(id);
+    setIndex(0);
+    resetPuzzleState(nextPuzzles[0]);
   };
 
   const loadPuzzle = (nextIndex: number) => {
     const nextPuzzle = puzzles[nextIndex];
     if (!nextPuzzle) return;
     setIndex(nextIndex);
-    setFen(nextPuzzle.fen);
-    setSelected(null);
-    setDots({});
-    setSolved(false);
-    setSolutionShown(false);
-    setMessage(null);
+    resetPuzzleState(nextPuzzle);
   };
 
   const resetCurrent = () => {
     if (!puzzle) return;
-    setFen(puzzle.fen);
-    setSelected(null);
-    setDots({});
-    setSolved(false);
-    setSolutionShown(false);
-    setMessage(null);
+    resetPuzzleState(puzzle);
   };
 
-  const playSolutionMove = (showSolution: boolean) => {
-    if (!puzzle) return false;
-    const next = new Chess(puzzle.fen);
-    const moved = next.move({
-      from: puzzle.solution.slice(0, 2) as Square,
-      to: puzzle.solution.slice(2, 4) as Square,
-      promotion: puzzle.solution[4],
-    });
-    if (!moved) return false;
-    setFen(next.fen());
+  const finishSolved = (lastSan: string, showSolution: boolean) => {
+    if (!puzzle) return;
+    const gainLabel = formatMaterialGain(puzzle.materialGain);
     setSolved(true);
     setSolutionShown(showSolution);
     setSelected(null);
     setDots({});
     setMessage(
-      showSolution ? `Çözüm: ${moved.san}` : `Doğru hamle: ${moved.san}`
+      showSolution
+        ? `Çözüm: ${solutionSan ?? lastSan} (${gainLabel} materyal)`
+        : multiMove
+          ? `Doğru! Seri tamam — net kazanç ${gainLabel}`
+          : `Doğru! ${lastSan} — net kazanç ${gainLabel}`
     );
+  };
+
+  const autoPlayBlackReplies = (game: Chess, fromIndex: number, line: string[]) => {
+    let idx = fromIndex;
+    let lastSan = "";
+    if (idx < line.length) {
+      const move = game.move(uciToMove(line[idx]));
+      if (move) {
+        playMoveSoundForMove(move);
+        lastSan = move.san;
+        idx += 1;
+      }
+    }
+    return { game, nextIndex: idx, lastSan };
+  };
+
+  const playSolutionMove = (showSolution: boolean) => {
+    if (!puzzle) return false;
+    const next = new Chess(puzzle.fen);
+    const { game: played, lastSan } = autoPlayBlackReplies(next, 0, solutionLine);
+    if (!lastSan && solutionLine.length === 0) return false;
+    setFen(played.fen());
+    setLineIndex(solutionLine.length);
+    finishSolved(lastSan, showSolution);
     return true;
   };
 
   const tryMove = (from: string, to: string) => {
     if (!puzzle || solved) return false;
     const uci = `${from}${to}`;
-    if (uci !== puzzle.solution) {
-      setMessage("Bu hamle değil. Başka bir taktik ara.");
+    const expected = solutionLine[lineIndex];
+    if (uci !== expected) {
+      const trapMsg = getTrapMessage(puzzle, from, to);
+      const captureMsg = trapMsg ?? getWrongCaptureFeedback(puzzle.fen, from, to);
+      setMessage(
+        captureMsg ??
+          (multiMove
+            ? "Bu hamle değil. Serideki doğru beyaz hamleyi oyna."
+            : "Bu hamle değil. Materyal kazandıran en iyi almayı ara.")
+      );
       setSelected(null);
       setDots({});
       return false;
     }
 
-    return playSolutionMove(false);
+    const next = new Chess(currentFen);
+    const moved = next.move(uciToMove(uci));
+    if (!moved) return false;
+    playMoveSoundForMove(moved);
+
+    const afterBlack = autoPlayBlackReplies(next, lineIndex + 1, solutionLine);
+    setFen(afterBlack.game.fen());
+
+    if (afterBlack.nextIndex >= solutionLine.length) {
+      finishSolved(moved.san, false);
+      return true;
+    }
+
+    setLineIndex(afterBlack.nextIndex);
+    setSelected(null);
+    setDots({});
+    const moveNo = whiteMoveNumber(afterBlack.nextIndex);
+    const blackMsg = afterBlack.lastSan ? ` Siyah ${afterBlack.lastSan} oynadı.` : "";
+    setMessage(
+      multiMove
+        ? `Doğru (${moveNo}/${totalWhiteMoves}).${blackMsg} Sıradaki beyaz hamle.`
+        : `Doğru! ${moved.san}`
+    );
+    return true;
   };
 
   const onSquareClick = ({ square, piece }: SquareHandlerArgs) => {
+    primeChessAudio();
     if (solved) return;
     if (selected && square in dots) {
       tryMove(selected, square);
@@ -191,6 +282,11 @@ export default function PuzzlesPage() {
               </button>
             ))}
           </div>
+          {placementReady("puzzles") && (
+            <div className="mt-6 max-w-xl">
+              <AdUnit placement="puzzles" format="horizontal" minHeight={100} />
+            </div>
+          )}
         </div>
       </ArenaShell>
     );
@@ -244,9 +340,20 @@ export default function PuzzlesPage() {
               {bucket?.label}
             </p>
             <h1 className="mt-1 text-xl font-bold text-white">{puzzle?.title}</h1>
-            <p className="mt-2 text-sm text-[#c8c6c2]">
-              Beyaz oynar. Tema: {puzzle?.theme}
-            </p>
+            <p className="mt-2 text-sm text-[#c8c6c2]">{puzzle?.prompt}</p>
+            <p className="mt-1 text-xs text-[#9b9893]">Tema: {puzzle?.theme}</p>
+            {multiMove && !solved && (
+              <p className="mt-2 text-xs text-sky-200/90">
+                Beyaz hamlesi {whiteMoveNumber(lineIndex)}/{totalWhiteMoves} — siyah yanıtları
+                otomatik oynanır (en fazla 5 yarım hamle).
+              </p>
+            )}
+            {puzzle && puzzle.traps && puzzle.traps.length > 0 && !solved && (
+              <p className="mt-2 text-xs text-amber-200/90">
+                İpucu: Birden fazla alma görünüyorsa geri almayı ve taş değerlerini
+                say.
+              </p>
+            )}
             {message && (
               <p
                 className={`mt-3 rounded-md border px-3 py-2 text-sm ${

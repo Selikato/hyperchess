@@ -10,3 +10,8 @@ export function getPublicSupabaseConfig(): { url: string; key: string } {
     (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
   return { url, key };
 }
+
+export function isSupabaseConfigured(): boolean {
+  const { url, key } = getPublicSupabaseConfig();
+  return Boolean(url && key);
+}

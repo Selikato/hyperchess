@@ -21,6 +21,7 @@ import type {
   PieceHandlerArgs,
   SquareHandlerArgs,
 } from "react-chessboard";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { useProfile } from "@/components/ProfileProvider";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
@@ -43,7 +44,9 @@ import {
   type PromotionPiece,
 } from "@/lib/chess/promotion";
 import { computeEloAfterOnlineMatch, DEFAULT_ELO } from "@/lib/elo";
+import { inferUciBetweenFens } from "@/lib/chess/inferMove";
 import { saveAnalysisSession } from "@/lib/analysis/session";
+import { playMoveSound, playMoveSoundForMove, primeChessAudio } from "@/lib/chess/sounds";
 
 const SELECTED_STYLE: CSSProperties = {
   boxShadow: "inset 0 0 0 3px rgba(129, 182, 76, 0.95)",
@@ -321,10 +324,11 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   const eloAppliedRef = useRef(false);
   const historyIndexRef = useRef(0);
   const historyRef = useRef<string[]>([STARTING_FEN]);
+  const moveUcisRef = useRef<string[]>([]);
   const fenRef = useRef(STARTING_FEN);
   const lastServerUpdateRef = useRef<string | null>(null);
 
-  const applyFenSnapshot = useCallback((nextFen: string) => {
+  const applyFenSnapshot = useCallback((nextFen: string, lastUci?: string) => {
     const prev = historyRef.current;
     const atLiveEdge = historyIndexRef.current >= prev.length - 1;
     const last = prev[prev.length - 1];
@@ -332,6 +336,10 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     if (next !== prev) {
       historyRef.current = next;
       setHistory(next);
+      const uci = lastUci ?? inferUciBetweenFens(last, nextFen);
+      if (uci) {
+        moveUcisRef.current = [...moveUcisRef.current, uci];
+      }
     }
     if (atLiveEdge) {
       const nextIndex = next.length - 1;
@@ -386,6 +394,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
     eloAppliedRef.current = false;
     const initialHistory = [STARTING_FEN];
     historyRef.current = initialHistory;
+    moveUcisRef.current = [];
     historyIndexRef.current = 0;
 
     queueMicrotask(() => {
@@ -454,7 +463,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
           table: "matches",
           filter: `id=eq.${matchId}`,
         },
-        (payload) => {
+        (payload: RealtimePostgresChangesPayload<MatchRow>) => {
           const row = payload.new as MatchRow;
           setMatch(row);
           lastServerUpdateRef.current = row.updated_at;
@@ -465,6 +474,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
               const serverFen = gameRef.current.fen();
               if (serverFen !== before) {
                 applyFenSnapshot(serverFen);
+                playMoveSound();
               }
             } catch {
               /* ignore */
@@ -650,11 +660,11 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
   }, [dots, selected]);
 
   const submitMoveAfterLocal = useCallback(
-    async (g: Chess) => {
+    async (g: Chess, lastUci?: string) => {
       if (!user || !match || myColor === null) return;
       const gameOver = g.isGameOver();
       gameRef.current.load(g.fen());
-      applyFenSnapshot(g.fen());
+      applyFenSnapshot(g.fen(), lastUci);
       clearSel();
       try {
         await applyMove(match.id, g.fen(), g.turn());
@@ -697,8 +707,10 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
         promotion,
       });
       if (!m) return false;
+      playMoveSoundForMove(m);
       setPendingPromotion(null);
-      void submitMoveAfterLocal(g);
+      const uci = `${from}${to}${promotion ?? ""}`;
+      void submitMoveAfterLocal(g, uci);
       return true;
     },
     [user, match, myColor, clearSel, submitMoveAfterLocal]
@@ -706,6 +718,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
 
   const onSquareClick = useCallback(
     ({ square, piece }: SquareHandlerArgs) => {
+      primeChessAudio();
       if (!canInteract) return;
       const game = gameRef.current;
 
@@ -972,6 +985,7 @@ export function OnlineChessGame({ matchId }: { matchId: string }) {
                   source: "online",
                   title: "Çevrimiçi Maç",
                   fens: history,
+                  ucis: moveUcisRef.current,
                 });
                 window.location.href = `/play/analysis?id=${encodeURIComponent(id)}`;
               }}

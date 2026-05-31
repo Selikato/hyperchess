@@ -133,10 +133,7 @@ export async function setOwnProfileElo(nextElo: number): Promise<void> {
   const uid = session?.user?.id;
   if (!uid) throw new Error("not authenticated");
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ elo: nextElo, updated_at: new Date().toISOString() })
-    .eq("id", uid);
+  const { error } = await supabase.rpc("update_elo", { p_elo: nextElo });
   if (error) throw error;
 }
 
@@ -213,16 +210,31 @@ export async function acceptFriendRequest(friendshipId: string): Promise<void> {
 }
 
 export async function searchProfilesByName(q: string): Promise<ProfileSearchRow[]> {
-  const term = q.trim().replace(/%/g, "").replace(/_/g, "");
+  const term = q.trim().replace(/[%_,().]/g, "");
   if (term.length < 2) return [];
   const pattern = `%${term}%`;
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, display_name, full_name")
-    .or(`display_name.ilike.${pattern},full_name.ilike.${pattern}`)
-    .limit(12);
-  if (error) throw error;
-  return (data ?? []) as ProfileSearchRow[];
+
+  const [byDisplay, byFull] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id, display_name, full_name")
+      .ilike("display_name", pattern)
+      .limit(12),
+    supabase
+      .from("profiles")
+      .select("id, display_name, full_name")
+      .ilike("full_name", pattern)
+      .limit(12),
+  ]);
+
+  if (byDisplay.error) throw byDisplay.error;
+  if (byFull.error) throw byFull.error;
+
+  const merged = new Map<string, ProfileSearchRow>();
+  for (const row of [...(byDisplay.data ?? []), ...(byFull.data ?? [])]) {
+    merged.set(row.id, row as ProfileSearchRow);
+  }
+  return [...merged.values()].slice(0, 12);
 }
 
 export async function listAcceptedFriendships(userId: string): Promise<FriendshipRow[]> {

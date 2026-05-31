@@ -10,7 +10,8 @@ import {
   useState,
 } from "react";
 import type { User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabaseClient";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import { DEFAULT_ELO } from "@/lib/elo";
 
 type ProfileContextValue = {
@@ -37,6 +38,15 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profileLoading, setProfileLoading] = useState(true);
 
   const refreshProfile = useCallback(async () => {
+    if (!isSupabaseConfigured()) {
+      setUser(null);
+      setElo(null);
+      setTitle(null);
+      setProfileLoading(false);
+      return;
+    }
+
+    const supabase = getSupabaseClient();
     try {
       const {
         data: { session },
@@ -82,6 +92,14 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      startTransition(() => {
+        void refreshProfile();
+      });
+      return;
+    }
+
+    const supabase = getSupabaseClient();
     startTransition(() => {
       void refreshProfile();
     });

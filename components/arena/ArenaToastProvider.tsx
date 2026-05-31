@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useProfile } from "@/components/ProfileProvider";
 import type { NotificationRow } from "@/lib/arena/types";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { markNotificationRead } from "@/lib/arena/api";
 
 type ToastItem = {
@@ -38,7 +39,7 @@ export function ArenaToastProvider({ children }: { children: React.ReactNode }) 
           table: "notifications",
           filter: `user_id=eq.${user.id}`,
         },
-        (payload) => {
+        (payload: RealtimePostgresChangesPayload<NotificationRow>) => {
           const row = payload.new as NotificationRow;
           if (!row?.id) return;
           if (row.type === "match_invite") return;

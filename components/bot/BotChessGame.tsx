@@ -26,7 +26,9 @@ import {
   DEFAULT_ELO,
 } from "@/lib/elo";
 import { refreshLeagues } from "@/lib/arena/api";
+import { inferUciBetweenFens } from "@/lib/chess/inferMove";
 import { saveAnalysisSession } from "@/lib/analysis/session";
+import { playMoveSoundForMove, primeChessAudio } from "@/lib/chess/sounds";
 import {
   getPromotionChoices,
   type PendingPromotion,
@@ -327,6 +329,7 @@ export function BotChessGame() {
   const runBotMoveRef = useRef<() => Promise<void>>(async () => {});
   const historyIndexRef = useRef(0);
   const historyRef = useRef<string[]>([game.fen()]);
+  const moveUcisRef = useRef<string[]>([]);
 
   const previousEvalRef = useRef<number | null>(null);
 
@@ -437,7 +440,7 @@ export function BotChessGame() {
     game.turn() === "w" &&
     historyIndex === history.length - 1;
 
-  const pushFenSnapshot = useCallback((nextFen: string) => {
+  const pushFenSnapshot = useCallback((nextFen: string, lastUci?: string) => {
     const prev = historyRef.current;
     const atLiveEdge = historyIndexRef.current >= prev.length - 1;
     const last = prev[prev.length - 1];
@@ -445,6 +448,10 @@ export function BotChessGame() {
     if (next !== prev) {
       historyRef.current = next;
       setHistory(next);
+      const uci = lastUci ?? inferUciBetweenFens(last, nextFen);
+      if (uci) {
+        moveUcisRef.current = [...moveUcisRef.current, uci];
+      }
     }
     if (atLiveEdge) {
       const nextIndex = next.length - 1;
@@ -485,8 +492,10 @@ export function BotChessGame() {
           promotion,
         });
         if (!m) return false;
+        playMoveSoundForMove(m);
         setPendingPromotion(null);
-        pushFenSnapshot(game.fen());
+        const uci = `${from}${to}${promotion ?? ""}`;
+        pushFenSnapshot(game.fen(), uci);
         clearSel();
         const end = outcomeAfterMove(game);
         if (end) {
@@ -530,7 +539,9 @@ export function BotChessGame() {
         setBanner("Hata oluştu, tekrar dene.");
         return;
       }
-      pushFenSnapshot(game.fen());
+      playMoveSoundForMove(move);
+      const botUci = `${parsed.from}${parsed.to}${parsed.promotion ?? ""}`;
+      pushFenSnapshot(game.fen(), botUci);
       setBanner(null);
 
       const postEval = await eng.evaluateFen(game.fen(), depth);
@@ -587,6 +598,7 @@ export function BotChessGame() {
 
   const onSquareClick = useCallback(
     ({ square, piece }: SquareHandlerArgs) => {
+      primeChessAudio();
       if (!canInteract) return;
 
       if (selected) {
@@ -649,6 +661,7 @@ export function BotChessGame() {
     const initialFen = game.fen();
     const initialHistory = [initialFen];
     historyRef.current = initialHistory;
+    moveUcisRef.current = [];
     setHistory(initialHistory);
     setHistoryIndex(0);
     historyIndexRef.current = 0;
@@ -715,18 +728,9 @@ export function BotChessGame() {
       p_elo: nextElo,
     });
     if (rpcError) {
-      // RPC henüz uygulanmamış ortamlarda (ör. prod), eski yola fallback.
-      const { error: fallbackError } = await supabase
-        .from("profiles")
-        .update({ elo: nextElo, updated_at: new Date().toISOString() })
-        .eq("id", user.id);
-      if (fallbackError) {
-        setBanner(
-          `Elo güncellenemedi (${fallbackError.code ?? "403"}). Supabase'te update_elo.sql çalıştır ve RLS policy'lerini doğrula.`
-        );
-        await refreshProfile();
-        return;
-      }
+      setBanner("Elo güncellenemedi. Lütfen daha sonra tekrar dene.");
+      await refreshProfile();
+      return;
     }
 
     await refreshLeagues().catch(() => undefined);
@@ -933,6 +937,7 @@ export function BotChessGame() {
                   source: "bot",
                   title: "Bot Maçı",
                   fens: history,
+                  ucis: moveUcisRef.current,
                 });
                 window.location.href = `/play/analysis?id=${encodeURIComponent(id)}`;
               }}

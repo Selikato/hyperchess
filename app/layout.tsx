@@ -5,6 +5,8 @@ import { NotificationInbox } from "@/components/arena/NotificationInbox";
 import { ArenaToastProvider } from "@/components/arena/ArenaToastProvider";
 import { PresenceTracker } from "@/components/arena/PresenceTracker";
 import { ProfileProvider } from "@/components/ProfileProvider";
+import { AdSenseScript } from "@/components/ads/AdSenseScript";
+import { SupabaseConfigBanner } from "@/components/SupabaseConfigBanner";
 import { SupabaseSessionListener } from "@/components/SupabaseSessionListener";
 import "./globals.css";
 
@@ -20,7 +22,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "HyperChess",
-  description: "Satranç ve hesap",
+  description: "Online satranç, bot maçı, bulmaca ve analiz",
 };
 
 export default function RootLayout({
@@ -30,10 +32,12 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="en"
+      lang="tr"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
+        <AdSenseScript />
+        <SupabaseConfigBanner />
         <SupabaseSessionListener />
         <ProfileProvider>
           <PresenceTracker />

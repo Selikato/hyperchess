@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Lock, Mail, User } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { safeRedirectPath } from "@/lib/auth/safeRedirect";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getAuthCallbackUrl } from "@/lib/siteUrl";
+import { getSupabaseClient, SUPABASE_CONFIG_ERROR } from "@/lib/supabaseClient";
 
 type AuthMode = "login" | "register";
 
@@ -41,7 +45,9 @@ function mapNetworkAuthError(message: string): string {
     m.includes("too many requests") ||
     m.includes("429")
   ) {
-    return "E-posta gönderim sınırı doldu. Supabase’in yerleşik e-postası saatte çok az gönderime izin verir; bir süre sonra tekrar dene. Sık kayıt veya birkaç kişi aynı anda denerse de sınır dolabilir. Kalıcı çözüm: Supabase Dashboard → Authentication → SMTP’den kendi sağlayıcını bağlamak (SendGrid, Resend vb.).";
+    return process.env.NODE_ENV === "development"
+      ? "E-posta gönderim sınırı doldu. Supabase’in yerleşik e-postası saatte çok az gönderime izin verir; bir süre sonra tekrar dene. Kalıcı çözüm: Supabase Dashboard → Authentication → SMTP."
+      : "Çok fazla deneme yapıldı. Lütfen birkaç dakika sonra tekrar dene.";
   }
   if (isAlreadyRegisteredError(message)) {
     return "Bu e-posta ile zaten bir hesap var. Üstteki Giriş sekmesinden şifrenle giriş yap.";
@@ -51,6 +57,8 @@ function mapNetworkAuthError(message: string): string {
 
 export function Auth() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = safeRedirectPath(searchParams.get("next"), "/play/online");
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -60,8 +68,15 @@ export function Auth() {
   const [info, setInfo] = useState<string | null>(null);
 
   useEffect(() => {
-    void supabase.auth.getSession();
+    if (!isSupabaseConfigured()) return;
+    void getSupabaseClient().auth.getSession();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("auth") === "error") {
+      setError("Oturum doğrulanamadı. Linkin süresi dolmuş olabilir — tekrar giriş yap.");
+    }
+  }, [searchParams]);
 
   const setModeSafe = (next: AuthMode) => {
     setMode(next);
@@ -94,6 +109,12 @@ export function Auth() {
       return;
     }
 
+    if (!isSupabaseConfigured()) {
+      setError(SUPABASE_CONFIG_ERROR);
+      return;
+    }
+
+    const supabase = getSupabaseClient();
     setLoading(true);
     try {
       if (mode === "login") {
@@ -105,7 +126,7 @@ export function Auth() {
           setError(mapNetworkAuthError(signInError.message));
           return;
         }
-        router.push("/");
+        router.push(nextPath);
         router.refresh();
         return;
       }
@@ -127,13 +148,13 @@ export function Auth() {
             password,
           });
           if (!signInError) {
-            router.push("/");
+            router.push(nextPath);
             router.refresh();
             return;
           }
           if (signInError.message && isInvalidCredentialsError(signInError.message)) {
             setError(
-              "Bu e-posta bu Supabase projesinde daha önce kayıtlı (test veya başka giriş olabilir). Şifre yanlış olabilir — Giriş sekmesinden dene. E-postayı hiç kullanmadığını düşünüyorsan Dashboard → Authentication → Users’ta adresi kontrol et; gerekirse silip yeniden kayıt ol."
+              "Bu e-posta ile zaten bir hesap var. Giriş sekmesinden şifreni dene veya şifreni sıfırla."
             );
           } else {
             setError(mapNetworkAuthError(signInError.message));
@@ -169,6 +190,37 @@ export function Auth() {
     } catch (err) {
       const raw =
         err instanceof Error ? err.message : "Beklenmeyen bir hata oluştu.";
+      setError(mapNetworkAuthError(raw));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePasswordReset() {
+    setError(null);
+    setInfo(null);
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) {
+      setError("Şifre sıfırlama için e-posta adresini gir.");
+      return;
+    }
+    if (!isSupabaseConfigured()) {
+      setError(SUPABASE_CONFIG_ERROR);
+      return;
+    }
+    setLoading(true);
+    try {
+      const supabase = getSupabaseClient();
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmed, {
+        redirectTo: getAuthCallbackUrl(),
+      });
+      if (resetError) {
+        setError(mapNetworkAuthError(resetError.message));
+        return;
+      }
+      setInfo("Şifre sıfırlama bağlantısı e-postana gönderildi. Gelen kutunu kontrol et.");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "Beklenmeyen bir hata oluştu.";
       setError(mapNetworkAuthError(raw));
     } finally {
       setLoading(false);
@@ -307,7 +359,9 @@ export function Auth() {
             <div className="text-right">
               <button
                 type="button"
-                className="text-xs font-medium text-[#bababa] underline-offset-2 hover:text-white hover:underline"
+                onClick={() => void handlePasswordReset()}
+                disabled={loading}
+                className="text-xs font-medium text-[#bababa] underline-offset-2 hover:text-white hover:underline disabled:opacity-50"
               >
                 Şifreni mi unuttun?
               </button>
@@ -327,19 +381,19 @@ export function Auth() {
 
         <p className="mt-8 text-center text-xs leading-relaxed text-[#8b8987]">
           Devam ederek{" "}
-          <button
-            type="button"
+          <Link
+            href="/terms"
             className="text-[#bababa] underline-offset-2 hover:text-white hover:underline"
           >
             Hizmet Şartları
-          </button>{" "}
+          </Link>{" "}
           ve{" "}
-          <button
-            type="button"
+          <a
+            href="/privacy"
             className="text-[#bababa] underline-offset-2 hover:text-white hover:underline"
           >
             Gizlilik Politikası
-          </button>
+          </a>
           &apos;nı kabul etmiş olursun.
         </p>
       </div>

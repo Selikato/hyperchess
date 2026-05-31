@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { BookOpen, Clock, Cpu, GraduationCap } from "lucide-react";
+import { AdUnit } from "@/components/ads/AdUnit";
 import { ActiveMatchesStrip } from "@/components/arena/ActiveMatchesStrip";
 import { arena, ArenaShell } from "@/components/arena/ArenaShell";
+import { placementReady } from "@/lib/ads/config";
 import { FriendsPanel } from "@/components/arena/FriendsPanel";
 import { TournamentsCard } from "@/components/arena/TournamentsCard";
 import { useProfile } from "@/components/ProfileProvider";
@@ -181,6 +183,12 @@ export default function OnlineLobbyPage() {
           />
         </div>
 
+        {placementReady("lobby_banner") && (
+          <div className="px-4 pt-3 lg:hidden">
+            <AdUnit placement="lobby_banner" format="horizontal" minHeight={100} />
+          </div>
+        )}
+
         <section className="px-4 pt-5">
           <h2 className="text-base font-bold text-white">İstatistikler</h2>
           <p className="mt-1 text-sm text-[#9b9893]">
@@ -228,6 +236,12 @@ export default function OnlineLobbyPage() {
             ♟
           </div>
         </div>
+
+        {placementReady("lobby_banner") && (
+          <div className="mb-6 hidden lg:block">
+            <AdUnit placement="lobby_banner" format="horizontal" minHeight={90} />
+          </div>
+        )}
 
         <div className="mb-10 grid gap-4 sm:grid-cols-2">
           <Link

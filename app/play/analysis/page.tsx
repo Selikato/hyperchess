@@ -4,16 +4,30 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Chess } from "chess.js";
-import type { Square } from "chess.js";
+import type { Move, Square } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { BookOpen, CircleHelp, Info, Star, ThumbsUp, X } from "lucide-react";
+import { AdUnit } from "@/components/ads/AdUnit";
 import { ArenaShell } from "@/components/arena/ArenaShell";
+import { placementReady } from "@/lib/ads/config";
 import { MAESTRO_PIECES } from "@/components/arena/customPieces";
 import {
   StockfishBrowserEngine,
   parseUciBestmove,
 } from "@/lib/stockfish/browserEngine";
 import { loadAnalysisSession } from "@/lib/analysis/session";
+import { requestLichessCloudEval, type PositionEval } from "@/lib/lichess/cloudEval";
+import { enemyNetGainIfCapture, findWorstTacticalThreat } from "@/lib/chess/hanging";
+import {
+  effectiveCentipawnLoss,
+  formatMaterialGain,
+  materialGainedByMover,
+  materialLostByMover,
+  materialPointsToCp,
+  pieceLabelTr,
+  pieceValue,
+  sideMaterialFromFen,
+} from "@/lib/chess/material";
 
 type MoveTag =
   | "brilliant"
@@ -40,11 +54,17 @@ type AnalyzedMove = {
   bestUci: string | null;
   tag: MoveTag;
   lossCp: number;
+  /** Hamlede kaybedilen materyal (piyon=1 … vezir=9). */
+  materialLost: number;
   comment: string | null;
 };
 
 const ANALYSIS_DEPTH_FAST = 13;
 const ANALYSIS_MULTIPV = 3;
+/** Lichess: tek seferde bir istek; tokensız hesapta ~15–20/dk limit olabilir */
+const LICHESS_REQUEST_GAP_MS = 450;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type EvalSnapshot = {
   bestUci: string | null;
@@ -120,19 +140,6 @@ function TagBadgeIcon({ tag }: { tag: MoveTag }) {
   return <span className="text-[13px] font-black leading-none">{TAG_SYMBOL[tag]}</span>;
 }
 
-function materialNoKing(fen: string, color: "w" | "b") {
-  const board = fen.split(" ")[0] ?? "";
-  const value: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
-  let sum = 0;
-  for (const c of board) {
-    const lower = c.toLowerCase();
-    if (!(lower in value)) continue;
-    const isWhite = c !== lower;
-    if ((color === "w" && isWhite) || (color === "b" && !isWhite)) sum += value[lower];
-  }
-  return sum;
-}
-
 function winProbFromCp(cpForMover: number | null) {
   if (cpForMover == null) return 0.5;
   const x = Math.max(-1000, Math.min(1000, cpForMover));
@@ -143,9 +150,40 @@ function fenTurnIsWhite(fen: string) {
   return (fen.split(" ")[1] ?? "w") === "w";
 }
 
+function upgradeTagForMaterial(
+  tag: MoveTag,
+  materialLost: number,
+  fenAfter: string,
+  mover: "w" | "b"
+): MoveTag {
+  const threat = findWorstTacticalThreat(fenAfter, mover, TACTICAL_COMMENT_MIN_GAIN);
+  if (materialLost >= 9 || (threat?.enemyNetGain ?? 0) >= 9) return "blunder";
+  if (materialLost >= 5 || (threat?.enemyNetGain ?? 0) >= 5) {
+    if (
+      tag === "best" ||
+      tag === "great" ||
+      tag === "excellent" ||
+      tag === "good" ||
+      tag === "book" ||
+      tag === "interesting"
+    ) {
+      return "mistake";
+    }
+    if (tag === "dubious") return "blunder";
+  }
+  if (materialLost >= 3 || (threat?.enemyNetGain ?? 0) >= 3) {
+    if (tag === "best" || tag === "great" || tag === "excellent" || tag === "good" || tag === "book") {
+      return "dubious";
+    }
+  }
+  return tag;
+}
+
 function classifyMove(args: {
   ply: number;
   loss: number;
+  materialLost: number;
+  materialGained: number;
   isMateMove: boolean;
   san: string;
   bestEvalForMover: number | null;
@@ -160,6 +198,8 @@ function classifyMove(args: {
   const {
     ply,
     loss,
+    materialLost,
+    materialGained,
     isMateMove,
     san,
     bestEvalForMover,
@@ -175,7 +215,13 @@ function classifyMove(args: {
   const playedPerspective = playedEvalForMover;
   const winDrop = winProbFromCp(bestPerspective) - winProbFromCp(playedPerspective);
   const turn: "w" | "b" = (fenBefore.split(" ")[1] ?? "w") === "b" ? "b" : "w";
+  const effectiveLoss = effectiveCentipawnLoss(loss, materialLost);
+
   if (isMateMove) return "best";
+
+  if (materialLost >= 9 && effectiveLoss >= 80) return "blunder";
+  if (materialLost >= 5 && effectiveLoss >= 120) return "blunder";
+
   if (
     bestPerspective != null &&
     playedPerspective != null &&
@@ -184,25 +230,38 @@ function classifyMove(args: {
   ) {
     return "missed_win";
   }
-  if (winDrop > 0.1) return "blunder";
-  if (loss >= 200) return "blunder";
+  if (winDrop > 0.1 && effectiveLoss >= 80) return "blunder";
+  if (effectiveLoss >= 200) return "blunder";
+
   const openingLikeSan = !/[x+#=]/.test(san);
   const playedInTop3 = playedUci != null && top3Uci.includes(playedUci);
-  if (ply <= 10 && loss <= 25 && openingLikeSan && playedInTop3) return "book";
+  if (ply <= 10 && effectiveLoss <= 25 && openingLikeSan && playedInTop3 && materialLost === 0) {
+    return "book";
+  }
+
   const sameAsBest = bestUci != null && playedUci != null && bestUci === playedUci;
   const inTop3 = playedInTop3;
-  const matBefore = materialNoKing(fenBefore, turn);
-  const matAfter = materialNoKing(fenAfter, turn);
-  const sacrifice = matBefore - matAfter >= 2;
-  if (!inTop3 && deepBestUci && playedUci === deepBestUci && loss <= 25) return "brilliant";
-  if (sameAsBest && sacrifice && loss <= 20 && (playedPerspective ?? 0) > 50) return "brilliant";
-  if (loss <= 15) return "best";
-  if (loss <= 35) return "great";
-  if (loss <= 65) return "excellent";
-  if (loss <= 95) return "good";
-  if (loss <= 79) return "dubious";
-  if (loss <= 199) return "mistake";
-  return "blunder";
+  const matBefore = sideMaterialFromFen(fenBefore, turn);
+  const matAfter = sideMaterialFromFen(fenAfter, turn);
+  const sacrifice = matBefore - matAfter >= 2 && materialGained < materialLost;
+
+  if (!inTop3 && deepBestUci && playedUci === deepBestUci && effectiveLoss <= 25 && sacrifice) {
+    return "brilliant";
+  }
+  if (sameAsBest && sacrifice && effectiveLoss <= 20 && (playedPerspective ?? 0) > 50) {
+    return "brilliant";
+  }
+
+  let tag: MoveTag;
+  if (effectiveLoss <= 15) tag = "best";
+  else if (effectiveLoss <= 35) tag = "great";
+  else if (effectiveLoss <= 65) tag = "excellent";
+  else if (effectiveLoss <= 95) tag = "good";
+  else if (effectiveLoss <= 120) tag = "dubious";
+  else if (effectiveLoss <= 199) tag = "mistake";
+  else tag = "blunder";
+
+  return upgradeTagForMaterial(tag, materialLost, fenAfter, turn);
 }
 
 function clampEval(cp: number | null) {
@@ -251,7 +310,8 @@ function accuracyFromTags(moves: AnalyzedMove[]) {
   let totalWeight = 0;
   for (const m of moves) {
     const rawLoss = Number(m.lossCp);
-    const loss = Number.isFinite(rawLoss) ? rawLoss : 120;
+    const matCp = materialPointsToCp(m.materialLost ?? 0);
+    const loss = Number.isFinite(rawLoss) ? Math.max(rawLoss, matCp) : Math.max(120, matCp);
     const byCp = cpScore(loss);
     const byTag = tagBase[m.tag] ?? 50;
     // Etiket tavanı + CP kaybı birlikte değerlendirilir.
@@ -293,39 +353,16 @@ function squareToPercent(square: string) {
   };
 }
 
-const PIECE_TR: Record<string, string> = {
-  p: "Piyon",
-  n: "At",
-  b: "Fil",
-  r: "Kale",
-  q: "Vezir",
-  k: "Şah",
-};
-
-function attackedBy(game: Chess, color: "w" | "b", square: string) {
-  return game
-    .moves({ verbose: true })
-    .filter((m) => m.color === color && m.to === square).length;
-}
+const TACTICAL_COMMENT_MIN_GAIN = 2;
 
 function getHangingPieceComment(fenAfter: string, mover: "w" | "b"): string | null {
-  const g = new Chess(fenAfter);
-  const enemy: "w" | "b" = mover === "w" ? "b" : "w";
-  const board = g.board();
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const piece = board[r]?.[c];
-      if (!piece || piece.color !== mover || piece.type === "k") continue;
-      const sq = `${"abcdefgh"[c]}${8 - r}`;
-      const defenders = attackedBy(g, mover, sq);
-      const attackers = attackedBy(g, enemy, sq);
-      if (attackers > 0 && defenders === 0) {
-        const tr = PIECE_TR[piece.type] ?? "Taş";
-        return `Blunder: ${sq} karesindeki ${tr} boşta kaldı, rakip bedavadan alabilir.`;
-      }
-    }
+  const threat = findWorstTacticalThreat(fenAfter, mover, TACTICAL_COMMENT_MIN_GAIN);
+  if (!threat || threat.enemyNetGain < TACTICAL_COMMENT_MIN_GAIN) return null;
+  const label = pieceLabelTr(threat.pieceType);
+  if (!threat.defended) {
+    return `Blunder: ${threat.square} karesindeki ${label} (${formatMaterialGain(threat.value)} puan) korumasız — rakip bedavadan alabilir.`;
   }
-  return null;
+  return `Blunder: ${threat.square} karesindeki ${label} alınırsa rakip net ${formatMaterialGain(threat.enemyNetGain)} kazanır.`;
 }
 
 function getMissedWinComment(
@@ -334,27 +371,31 @@ function getMissedWinComment(
   mover: "w" | "b",
   playedUci: string
 ): string | null {
-  const before = new Chess(fenBefore);
-  const after = new Chess(fenAfter);
   const enemy: "w" | "b" = mover === "w" ? "b" : "w";
   const captureTo = playedUci.slice(2, 4);
-  const board = before.board();
+  const after = new Chess(fenAfter);
+  const board = new Chess(fenBefore).board();
+  let best: { square: string; pieceType: string; enemyNetGain: number } | null = null;
+
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const p = board[r]?.[c];
       if (!p || p.color !== enemy || p.type === "k") continue;
       const sq = `${"abcdefgh"[c]}${8 - r}`;
-      const myAttackers = attackedBy(before, mover, sq);
-      const enemyDefenders = attackedBy(before, enemy, sq);
-      if (myAttackers > 0 && enemyDefenders === 0) {
-        const stillThere = after.get(sq as Square);
-        if (!stillThere || captureTo === sq) continue;
-        const tr = PIECE_TR[p.type] ?? "Taş";
-        return `Missed Win: Rakibin ${sq} karesindeki ${tr} boştaydı, büyük bir fırsat kaçtı.`;
+      const stillThere = after.get(sq as Square);
+      if (!stillThere || captureTo === sq) continue;
+
+      const gain = enemyNetGainIfCapture(fenBefore, sq, enemy);
+      if (gain == null || gain < 1) continue;
+
+      if (!best || gain > best.enemyNetGain || (gain === best.enemyNetGain && pieceValue(p.type) > pieceValue(best.pieceType))) {
+        best = { square: sq, pieceType: p.type, enemyNetGain: gain };
       }
     }
   }
-  return null;
+  if (!best) return null;
+  const label = pieceLabelTr(best.pieceType);
+  return `Missed Win: Rakibin ${best.square} karesindeki ${label} alınabilirdi (net ${formatMaterialGain(best.enemyNetGain)}).`;
 }
 
 function getMateInOneThreatComment(fenAfter: string): string | null {
@@ -393,34 +434,67 @@ function getForkComment(fenAfter: string, mover: "w" | "b"): string | null {
   return null;
 }
 
+function getBadExchangeComment(
+  materialLost: number,
+  materialGained: number,
+  captured: string | null | undefined
+): string | null {
+  const net = materialGained - materialLost;
+  if (materialLost <= 0) return null;
+  if (net < 0) {
+    return `Kötü alışveriş: net ${formatMaterialGain(net)} materyal (taş puanlarına göre).`;
+  }
+  if (captured && materialLost > pieceValue(captured)) {
+    const label = pieceLabelTr(captured);
+    return `Daha değerli taş verildi: ${label} alındı ama ${formatMaterialGain(-materialLost)} kayıp oluştu.`;
+  }
+  if (materialLost >= 3) {
+    return `Bu hamlede yaklaşık ${formatMaterialGain(-materialLost)} materyal kaybı var.`;
+  }
+  return null;
+}
+
 function buildComment(args: {
   tag: MoveTag;
   fenBefore: string;
   fenAfter: string;
   mover: "w" | "b";
   playedUci: string;
+  materialLost: number;
+  materialGained: number;
+  captured: string | null | undefined;
 }): string | null {
-  const { tag, fenBefore, fenAfter, mover, playedUci } = args;
+  const { tag, fenBefore, fenAfter, mover, playedUci, materialLost, materialGained, captured } =
+    args;
   const mateThreat = getMateInOneThreatComment(fenAfter);
   if (mateThreat) return mateThreat;
+
+  const exchange = getBadExchangeComment(materialLost, materialGained, captured);
+
   if (tag === "missed_win") {
     return (
       getMissedWinComment(fenBefore, fenAfter, mover, playedUci) ??
+      exchange ??
       "Missed Win: Kazanç devamını kaçırdın, avantajı geri verdin."
     );
   }
   if (tag === "blunder") {
     return (
       getHangingPieceComment(fenAfter, mover) ??
-      "Blunder: Bu hamle konumu ciddi şekilde kötüleştiriyor."
+      getForkComment(fenAfter, mover) ??
+      exchange ??
+      "Blunder: Motor değerlendirmesine göre konum belirgin şekilde kötüleşti."
     );
   }
   if (tag === "mistake" || tag === "dubious") {
     return (
       getForkComment(fenAfter, mover) ??
-      "Mistake: Rakibin taşlarına karşı savunma düzenin zayıfladı."
+      getHangingPieceComment(fenAfter, mover) ??
+      exchange ??
+      null
     );
   }
+  if (exchange) return exchange;
   return null;
 }
 
@@ -431,6 +505,7 @@ function AnalysisPageInner() {
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState("Maç Analizi");
   const [fens, setFens] = useState<string[]>([]);
+  const [ucis, setUcis] = useState<string[]>([]);
   const [moves, setMoves] = useState<AnalyzedMove[]>([]);
   const [selectedPly, setSelectedPly] = useState(0);
   const [blunderAlert, setBlunderAlert] = useState<string | null>(null);
@@ -451,6 +526,7 @@ function AnalysisPageInner() {
     }
     setTitle(payload.title);
     setFens(payload.fens);
+    setUcis(payload.ucis ?? []);
     setLoading(false);
   }, [id]);
 
@@ -459,23 +535,33 @@ function AnalysisPageInner() {
     let cancelled = false;
     const run = async () => {
       const engine = new StockfishBrowserEngine();
-      try {
+      let engineReady = false;
+      const ensureStockfish = async () => {
+        if (engineReady) return;
         await engine.connect();
         try {
           await engine.initUci({ skillLevel: 20, limitStrength: false });
         } catch {
-          // Bazı Stockfish derlemeleri bu opsiyonları desteklemeyebilir.
-          // Yedek başlatma ile analizi yine çalıştır.
           await engine.initUci();
           if (!cancelled) {
             setAnalysisNotice(
-              "Motor tam güç modunda açılamadı; uyumluluk modunda analiz yapılıyor."
+              "Yerel motor tam güç modunda açılamadı; uyumluluk modunda yedek analiz kullanılıyor."
             );
           }
         }
+        engineReady = true;
+      };
+
+      try {
         const out: AnalyzedMove[] = [];
         const evals: EvalSnapshot[] = [];
         let degradedCount = 0;
+        let lichessHits = 0;
+        let lichessMiss = 0;
+        let lichessRateLimited = 0;
+        let stockfishHits = 0;
+        let lichessStoppedByLimit = false;
+        const cloudCache = new Map<string, PositionEval | null>();
         const g = new Chess();
         if (!cancelled) {
           setProgressText(`Pozisyonlar analiz ediliyor: 0/${fens.length}`);
@@ -483,29 +569,106 @@ function AnalysisPageInner() {
         for (let i = 0; i < fens.length; i++) {
           if (cancelled) return;
           if (!cancelled) {
-            setProgressText(`Pozisyon ${i + 1}/${fens.length} analiz ediliyor...`);
-          }
-          try {
-            const topMoves = await engine.goTopMovesWithEval(
-              fens[i],
-              ANALYSIS_DEPTH_FAST,
-              ANALYSIS_MULTIPV
+            setProgressText(
+              `Pozisyon ${i + 1}/${fens.length} · Lichess ${lichessHits} · yerel ${stockfishHits}...`
             );
-            const best = topMoves[0];
-            evals[i] = {
-              bestUci: best?.uci ?? null,
-              evalCp: best?.evalCp ?? null,
-              evalMate: best?.evalMate ?? null,
-              topMoves,
-            };
-          } catch {
-            degradedCount += 1;
-            evals[i] = {
-              bestUci: null,
-              evalCp: 0,
-              evalMate: null,
-              topMoves: [],
-            };
+          }
+
+          let filled = false;
+          const fenKey = fens[i];
+
+          if (!lichessStoppedByLimit) {
+            let cloudEval: PositionEval | null | undefined = cloudCache.get(fenKey);
+            if (cloudEval === undefined) {
+              const result = await requestLichessCloudEval(fenKey, ANALYSIS_MULTIPV, {
+                retry429: i < 12,
+              });
+              if (result.status === "ok") {
+                cloudEval = result.eval;
+                lichessHits += 1;
+              } else if (result.status === "miss") {
+                cloudEval = null;
+                lichessMiss += 1;
+              } else if (result.status === "rate_limited") {
+                lichessRateLimited += 1;
+                lichessStoppedByLimit = true;
+                cloudEval = null;
+                if (!cancelled) {
+                  setAnalysisNotice(
+                    "Lichess istek limiti doldu; kalan pozisyonlar yerel Stockfish ile hesaplanıyor. " +
+                      "Daha fazla bulut analizi için .env.local içine LICHESS_API_TOKEN ekleyin."
+                  );
+                }
+              } else {
+                cloudEval = null;
+              }
+              cloudCache.set(fenKey, cloudEval);
+            }
+
+            if (cloudEval) {
+              evals[i] = {
+                bestUci: cloudEval.bestUci,
+                evalCp: cloudEval.evalCp,
+                evalMate: cloudEval.evalMate,
+                topMoves: cloudEval.topMoves,
+              };
+              filled = true;
+            }
+          }
+
+          if (!filled) {
+            try {
+              await ensureStockfish();
+              const topMoves = await engine.goTopMovesWithEval(
+                fens[i],
+                ANALYSIS_DEPTH_FAST,
+                ANALYSIS_MULTIPV
+              );
+              const best = topMoves[0];
+              evals[i] = {
+                bestUci: best?.uci ?? null,
+                evalCp: best?.evalCp ?? null,
+                evalMate: best?.evalMate ?? null,
+                topMoves,
+              };
+              stockfishHits += 1;
+            } catch {
+              degradedCount += 1;
+              evals[i] = {
+                bestUci: null,
+                evalCp: 0,
+                evalMate: null,
+                topMoves: [],
+              };
+            }
+          }
+
+          if (i < fens.length - 1) await sleep(LICHESS_REQUEST_GAP_MS);
+        }
+
+        if (!cancelled) {
+          const parts: string[] = [];
+          if (lichessHits > 0) {
+            parts.push(
+              `Lichess bulutu: ${lichessHits}/${fens.length} pozisyon (derin önceden hesaplanmış)`
+            );
+          }
+          if (lichessMiss > 0) {
+            parts.push(
+              `${lichessMiss} pozisyon Lichess veritabanında yoktu (özel orta oyun — normal)`
+            );
+          }
+          if (stockfishHits > 0) {
+            parts.push(`${stockfishHits} pozisyon yerel Stockfish ile`);
+          }
+          if (lichessRateLimited > 0) {
+            parts.push("istek limiti nedeniyle bulut erken kesildi");
+          }
+          if (parts.length > 0) {
+            setAnalysisNotice((prev) => {
+              if (prev?.includes("istek limiti")) return prev;
+              return parts.join(" · ") + ".";
+            });
           }
         }
         for (let i = 0; i < fens.length - 1; i++) {
@@ -515,15 +678,33 @@ function AnalysisPageInner() {
           }
           const fenBefore = fens[i];
           const fenAfter = fens[i + 1];
-          g.load(fenBefore);
-          const turn = g.turn();
-          const legal = g.moves({ verbose: true });
-          const played = legal.find((mv) => {
-            const t = new Chess(fenBefore);
-            t.move(mv);
-            return (t.fen().split(" ")[0] ?? "") === (fenAfter.split(" ")[0] ?? "");
-          });
+          const boardBefore = new Chess(fenBefore);
+          const turn = boardBefore.turn();
+          const uci = ucis[i];
+          let played: Move | null = null;
+          if (uci && uci.length >= 4) {
+            try {
+              played = boardBefore.move({
+                from: uci.slice(0, 2) as Square,
+                to: uci.slice(2, 4) as Square,
+                promotion: uci[4] as "q" | "r" | "b" | "n" | undefined,
+              });
+            } catch {
+              played = null;
+            }
+          }
+          if (!played) {
+            const legal = boardBefore.moves({ verbose: true });
+            played =
+              legal.find((mv) => {
+                const t = new Chess(fenBefore);
+                t.move(mv);
+                return (t.fen().split(" ")[0] ?? "") === (fenAfter.split(" ")[0] ?? "");
+              }) ?? null;
+          }
           if (!played) continue;
+          g.load(fenBefore);
+          g.move(played);
           const beforeEval = evals[i];
           const afterEval = evals[i + 1];
           // best.evalCp: fenBefore'da oynayan taraf perspektifi
@@ -534,13 +715,18 @@ function AnalysisPageInner() {
           const playedPerspective = afterEval?.evalCp == null ? null : -afterEval.evalCp;
           const playedEvalWhiteCp =
             afterEval?.evalCp == null ? null : fenTurnIsWhite(fenAfter) ? afterEval.evalCp : -afterEval.evalCp;
-          const loss =
+          const engineLoss =
             bestPerspective == null || playedPerspective == null
               ? 40
               : Math.max(0, bestPerspective - playedPerspective);
+          const materialLost = materialLostByMover(fenBefore, fenAfter, turn);
+          const materialGained = materialGainedByMover(fenBefore, fenAfter, turn);
+          const effectiveLoss = effectiveCentipawnLoss(engineLoss, materialLost);
           const tag = classifyMove({
             ply: i + 1,
-            loss,
+            loss: engineLoss,
+            materialLost,
+            materialGained,
             isMateMove: played.san.includes("#"),
             san: played.san,
             bestEvalForMover: bestPerspective,
@@ -563,13 +749,17 @@ function AnalysisPageInner() {
             evalAfterMate: afterEval?.evalMate ?? null,
             bestUci: beforeEval?.bestUci ?? null,
             tag,
-            lossCp: loss,
+            lossCp: effectiveLoss,
+            materialLost,
             comment: buildComment({
               tag,
               fenBefore,
               fenAfter,
               mover: turn,
               playedUci: `${played.from}${played.to}${played.promotion ?? ""}`,
+              materialLost,
+              materialGained,
+              captured: played.captured,
             }),
           });
           if (!cancelled && (i + 1) % 4 === 0) {
@@ -582,11 +772,11 @@ function AnalysisPageInner() {
           setSelectedPly(out.length);
           setProgressText("Analiz tamamlandı.");
           if (degradedCount > 0) {
-            setAnalysisNotice(
-              `${degradedCount} hamlede motor gecikmesi yaşandı, analiz güvenli modla tamamlandı.`
+            setAnalysisNotice((prev) =>
+              prev
+                ? `${prev} ${degradedCount} pozisyonda yerel motor da başarısız oldu.`
+                : `${degradedCount} pozisyonda motor gecikmesi yaşandı, analiz kısmen tamamlandı.`
             );
-          } else {
-            setAnalysisNotice(null);
           }
           if (out.length === 0) {
             setErr("Analiz için işlenebilir hamle bulunamadı.");
@@ -598,14 +788,14 @@ function AnalysisPageInner() {
           setProgressText(null);
         }
       } finally {
-        engine.dispose();
+        if (engineReady) engine.dispose();
       }
     };
     void run();
     return () => {
       cancelled = true;
     };
-  }, [loading, err, fens]);
+  }, [loading, err, fens, ucis]);
 
   const boardFen = useMemo(() => {
     if (fens.length === 0) return new Chess().fen();
@@ -645,9 +835,25 @@ function AnalysisPageInner() {
   const whiteAccuracy = accuracyForColor(moves, "w");
   const blackAccuracy = accuracyForColor(moves, "b");
   const moveBadgePos = useMemo(() => {
-    if (!selectedMove?.playedUci || selectedMove.playedUci.length < 4) return null;
+    if (!selectedMove) return null;
+    const fenAtPly = fens[selectedPly];
+    if (fenAtPly) {
+      const threat = findWorstTacticalThreat(
+        fenAtPly,
+        selectedMove.mover,
+        TACTICAL_COMMENT_MIN_GAIN
+      );
+      if (
+        threat &&
+        (selectedMove.tag === "blunder" || selectedMove.tag === "mistake") &&
+        selectedMove.comment?.includes(threat.square)
+      ) {
+        return squareToPercent(threat.square);
+      }
+    }
+    if (!selectedMove.playedUci || selectedMove.playedUci.length < 4) return null;
     return squareToPercent(selectedMove.playedUci.slice(2, 4));
-  }, [selectedMove]);
+  }, [selectedMove, fens, selectedPly]);
 
   useEffect(() => {
     if (selectedMove?.tag === "blunder") {
@@ -799,6 +1005,11 @@ function AnalysisPageInner() {
                 <p className="mt-1 text-xs text-[#c9c7c2]">Beyaz: %{whiteAccuracy}</p>
                 <p className="text-xs text-[#c9c7c2]">Siyah: %{blackAccuracy}</p>
               </div>
+              {placementReady("analysis") && (
+                <div className="mt-3">
+                  <AdUnit placement="analysis" format="rectangle" minHeight={250} />
+                </div>
+              )}
             </aside>
           </div>
         )}

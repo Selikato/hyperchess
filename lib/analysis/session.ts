@@ -2,6 +2,8 @@ export type AnalysisSessionPayload = {
   source: "bot" | "online";
   title: string;
   fens: string[];
+  /** fens[i] → fens[i+1]; uzunluk fens.length - 1 */
+  ucis?: string[];
 };
 
 const KEY_PREFIX = "hyperchess:analysis:";

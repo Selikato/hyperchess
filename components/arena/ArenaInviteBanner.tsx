@@ -12,6 +12,7 @@ import {
 } from "@/lib/arena/api";
 import { supabase } from "@/lib/supabaseClient";
 import type { NotificationRow } from "@/lib/arena/types";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
 export function ArenaInviteBanner() {
   const { user } = useProfile();
@@ -42,7 +43,7 @@ export function ArenaInviteBanner() {
           table: "notifications",
           filter: `user_id=eq.${user.id}`,
         },
-        (payload) => {
+        (payload: RealtimePostgresChangesPayload<NotificationRow>) => {
           const row = payload.new as NotificationRow;
           if (row?.type !== "match_invite" || row.read_at) return;
           setInvites((prev) => {

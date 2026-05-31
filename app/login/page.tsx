@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { Auth } from "@/components/Auth";
 
 export const metadata: Metadata = {
@@ -16,7 +17,9 @@ export default function LoginPage() {
       >
         ← Ana sayfa
       </Link>
-      <Auth />
+      <Suspense fallback={<div className="min-h-screen bg-[#262421]" />}>
+        <Auth />
+      </Suspense>
     </div>
   );
 }
